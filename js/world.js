@@ -1,14 +1,13 @@
 // Procedural city generation + tile collision helpers.
-// generateWorld(seed) is deterministic: host and clients build the exact same city from the seed.
+// generateWorld(seed, opts) is deterministic: host and clients build the exact same city from the seed + options.
+// opts: { type: coastal|island|lakes|river|archipelago, size: S|M|L, bases: number of gang base sites }
 
 import { makeRng, fbm, hash2 } from './rng.js';
-import { TILE, FACTIONS, NAME_PARTS } from './data.js';
-
-export const W = 256, H = 256;
+import { TILE, FACTIONS, NAME_PARTS, MAP_SIZES, MAP_TYPES, PVP_BASE_NAMES, BRANDS } from './data.js';
 
 export const T = {
   WATER: 0, SAND: 1, GRASS: 2, DIRT: 3, ROAD: 4, SIDEWALK: 5, CALCADAO: 6, CONCRETE: 7,
-  BUILD: 8, WALL: 9, STAIRS: 10, METAL: 11, TREE: 12, PAD: 13,
+  BUILD: 8, WALL: 9, STAIRS: 10, METAL: 11, TREE: 12, PAD: 13, BRIDGE: 14,
 };
 export const SOLID = new Uint8Array(16);
 SOLID[T.WATER] = SOLID[T.BUILD] = SOLID[T.WALL] = SOLID[T.TREE] = 1;
@@ -19,36 +18,114 @@ const GROUND = { base: T.CONCRETE, beach: T.GRASS, favela: T.DIRT, downtown: T.C
 
 export const CHUNK = 16;                            // tiles per prop/light bucket
 
-export function generateWorld(seed) {
+export function generateWorld(seed, opts = {}) {
+  const type = MAP_TYPES[opts.type] ? opts.type : 'coastal';
+  const sizeKey = MAP_SIZES[opts.size] ? opts.size : 'M';
+  const nBases = Math.max(1, Math.min(6, opts.bases | 0 || 1));
+  const W = MAP_SIZES[sizeKey].n, H = W;
+  const k = W / 256;
   const rng = makeRng(seed);
   const N = W * H;
   const tiles = new Uint8Array(N);
   let region = new Int16Array(N).fill(-1);
-  const coast = new Float32Array(N);
+  const coast = new Float32Array(N);                // distance to the ocean in tiles (< 0 = ocean)
+  const shore = new Float32Array(N).fill(99);       // distance to inland water (lakes, rivers)
+  const land = new Uint8Array(N);                   // 1 = land (incl. bridges), 0 = water
+  const bridge = new Uint8Array(N);
   const reserved = new Uint8Array(N);
   const I = (x, y) => y * W + x;
   const inb = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
+  const legacy = type === 'coastal';
 
-  // ---------------------------------------------------------------- coastline
+  // ---------------------------------------------------------------- water
   const side = rng.int(0, 3);                       // which edge the ocean is on
-  const bayU = rng.range(50, 200), bayDepth = rng.range(4, 22), bayW = rng.range(12, 26);
+  const bayU = rng.range(50 * k, 200 * k), bayDepth = rng.range(4, 22), bayW = rng.range(12, 26);
   const cseed = seed ^ 0x51ab;
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    let u, v;
-    if (side === 0) { u = x; v = H - 1 - y; }
-    else if (side === 1) { u = y; v = W - 1 - x; }
-    else if (side === 2) { u = x; v = y; }
-    else { u = y; v = x; }
-    const od = 14 + fbm(u * 0.03, 0.5, cseed, 3) * 14 + bayDepth * Math.exp(-(((u - bayU) / bayW) ** 2));
-    coast[I(x, y)] = v - od;
+  const wr = makeRng(seed ^ 0x77a1);                // extra rng for the newer map types
+  const uv = (x, y) => (side === 0 ? [x, H - 1 - y] : side === 1 ? [y, W - 1 - x] : side === 2 ? [x, y] : [y, x]);
+  if (type === 'coastal' || type === 'lakes' || type === 'river') {
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const [u, v] = uv(x, y);
+      const od = (legacy ? 14 : 11) + fbm(u * 0.03, 0.5, cseed, 3) * 14 + bayDepth * Math.exp(-(((u - bayU) / bayW) ** 2));
+      coast[I(x, y)] = v - od;
+      land[I(x, y)] = coast[I(x, y)] >= 0 ? 1 : 0;
+    }
+  }
+  const inland = new Uint8Array(N);
+  if (type === 'lakes') {
+    const lakes = [];
+    const n = Math.round((3 + wr.int(0, 2)) * k);
+    for (let a = 0; a < 400 && lakes.length < n; a++) {
+      const x = wr.int(20, W - 21), y = wr.int(20, H - 21);
+      if (coast[I(x, y)] < 34) continue;
+      const r = wr.range(7, 15) * Math.sqrt(k);
+      if (lakes.some((l) => Math.hypot(l.x - x, l.y - y) < l.r + r + 26)) continue;
+      lakes.push({ x, y, r });
+    }
+    for (const l of lakes) {
+      const R = Math.ceil(l.r * 1.4);
+      for (let y = l.y - R; y <= l.y + R; y++) for (let x = l.x - R; x <= l.x + R; x++) {
+        if (!inb(x, y)) continue;
+        const d = Math.hypot((x - l.x) * 0.9, y - l.y);
+        if (d < l.r * (0.72 + 0.5 * fbm(x * 0.09, y * 0.09, seed + 99, 2))) inland[I(x, y)] = 1;
+      }
+    }
+  }
+  let riverAxis = null;
+  if (type === 'river') {
+    const ph = wr.range(0, 6.28), amp = wr.range(10, 22) * k, freq = wr.range(0.018, 0.03) / k;
+    const uc = (v) => bayU + Math.sin(v * freq + ph) * amp + (fbm(v * 0.02, 3.3, seed + 5, 2) - 0.5) * 30 * k;
+    const wd = (v) => 2.6 + 2.2 * Math.exp(-v / (70 * k)) + fbm(v * 0.05, 1.7, seed + 6, 2) * 1.6;
+    riverAxis = { uc, wd };
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const [u, v] = uv(x, y);
+      if (Math.abs(u - uc(v)) < wd(v) && land[I(x, y)]) inland[I(x, y)] = 1;
+    }
+  }
+  if (type === 'island' || type === 'archipelago') {
+    const cx = W / 2 + wr.range(-8, 8) * k, cy = H / 2 + wr.range(-8, 8) * k;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const d = Math.hypot(x - cx, y - cy) / (W * 0.5);
+      let s;
+      if (type === 'island') s = 0.86 - d + (fbm(x * 0.02, y * 0.02, cseed, 3) - 0.5) * 0.55;
+      else {
+        s = (fbm(x * 0.017, y * 0.017, cseed, 4) - 0.5) * 1.7 + 0.95 - d * d * 1.15;
+        // sea channels split the land into islands
+        const ch1 = Math.abs(fbm(x * 0.011, y * 0.011, seed ^ 0x3c3c, 3) - 0.5);
+        const ch2 = Math.abs(fbm(x * 0.009 + 40, y * 0.009, seed ^ 0x5d5d, 3) - 0.5);
+        if (ch1 < 0.028 || ch2 < 0.022) s = -1;
+      }
+      land[I(x, y)] = s > 0 && x > 3 && y > 3 && x < W - 4 && y < H - 4 ? 1 : 0;
+    }
+  }
+  for (let i = 0; i < N; i++) if (inland[i]) land[i] = 0;
+
+  // drop tiny islands, then link the remaining land masses with bridges
+  if (!legacy) {
+    const comp = components(land, W, H);
+    for (let i = 0; i < N; i++) if (land[i] && comp.size[comp.id[i]] < 160) land[i] = 0;
+    linkLand(land, bridge, W, H, riverAxis, uv, side);
+  }
+
+  // distance fields: to the ocean (for beaches) and to inland water (lake/river promenades)
+  if (!legacy) {
+    const ocean = new Uint8Array(N);
+    for (let i = 0; i < N; i++) ocean[i] = !land[i] && !inland[i] ? 1 : 0;
+    const dO = distField(ocean, W, H), dI = distField(inland, W, H);
+    for (let i = 0; i < N; i++) {
+      if (type === 'lakes' || type === 'river') { if (!land[i] && !inland[i]) coast[i] = Math.min(coast[i], -0.5); }
+      else coast[i] = ocean[i] ? -1 : dO[i];
+      shore[i] = dI[i];
+    }
   }
 
   // ---------------------------------------------------------------- region seeds (poisson-ish)
   const seeds = [];
   const minD = 36;
-  for (let a = 0; a < 6000 && seeds.length < 70; a++) {
+  const seedCoast = legacy ? 15 : type === 'island' || type === 'archipelago' ? 8 : 12;
+  for (let a = 0; a < 6000 && seeds.length < (sizeKey === 'L' ? 110 : 70); a++) {
     const x = rng.int(9, W - 10), y = rng.int(9, H - 10);
-    if (coast[I(x, y)] < 15) continue;
+    if (coast[I(x, y)] < seedCoast || !land[I(x, y)] || shore[I(x, y)] < 5 || bridge[I(x, y)]) continue;
     let ok = true;
     for (const s of seeds) if ((s.x - x) ** 2 + (s.y - y) ** 2 < minD * minD) { ok = false; break; }
     if (ok) seeds.push({ x, y });
@@ -58,7 +135,7 @@ export function generateWorld(seed) {
   const ws1 = seed ^ 0x1234, ws2 = seed ^ 0x4321;
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const i = I(x, y);
-    if (coast[i] < 0) continue;
+    if (!land[i]) continue;
     const wx = x + (fbm(x * 0.05, y * 0.05, ws1, 2) - 0.5) * 16;
     const wy = y + (fbm(x * 0.05, y * 0.05, ws2, 2) - 0.5) * 16;
     let best = 0, bd = Infinity;
@@ -85,7 +162,7 @@ export function generateWorld(seed) {
       if (b === r && a >= 0 && a !== r) near.set(a, (near.get(a) || 0) + 1);
     }
     let target = -1, bc = 0;
-    for (const [k, v] of near) if (v > bc) { bc = v; target = k; }
+    for (const [kk, v] of near) if (v > bc) { bc = v; target = kk; }
     for (let i = 0; i < N; i++) if (region[i] === r) region[i] = target;
     counts = countTiles();
   }
@@ -111,27 +188,57 @@ export function generateWorld(seed) {
     if (x < R.minX) R.minX = x; if (x > R.maxX) R.maxX = x;
     if (y < R.minY) R.minY = y; if (y > R.maxY) R.maxY = y;
     if (coast[i] < 9) R.coastTiles++;
+    const deep = Math.min(coast[i], shore[i]);
+    if (deep > (R.deep || 0)) R.deep = deep;
     if (x + 1 < W) { const b = region[i + 1]; if (b >= 0 && b !== r) { nbSets[r].add(b); nbSets[b].add(r); } }
     if (y + 1 < H) { const b = region[i + W]; if (b >= 0 && b !== r) { nbSets[r].add(b); nbSets[b].add(r); } }
   }
-  regions.forEach((R, k) => {
-    R.neighbors = [...nbSets[k]];
+  regions.forEach((R, kk) => {
+    R.neighbors = [...nbSets[kk]];
     R.cx = Math.round(R.sx / R.tiles);
     R.cy = Math.round(R.sy / R.tiles);
-    if (region[I(R.cx, R.cy)] !== k) { R.cx = R.seedX; R.cy = R.seedY; }
+    if (region[I(R.cx, R.cy)] !== kk) { R.cx = R.seedX; R.cy = R.seedY; }
   });
 
-  // ---------------------------------------------------------------- base, tiers, factions
-  let baseId = 0, bestD = Infinity;
-  for (const R of regions) {
-    const d = (R.cx - W / 2) ** 2 + (R.cy - H / 2) ** 2 + (coast[I(R.cx, R.cy)] < 40 ? 4000 : 0);
-    if (d < bestD) { bestD = d; baseId = R.id; }
+  // ---------------------------------------------------------------- bases, tiers, factions
+  const bases = [];
+  let mx = 0, my = 0, ml = 0;
+  for (const R of regions) { mx += R.sx; my += R.sy; ml += R.tiles; }
+  mx /= ml; my /= ml;
+  if (nBases === 1) {
+    let baseId = 0, bestD = Infinity;
+    for (const R of regions) {
+      const d = (R.cx - W / 2) ** 2 + (R.cy - H / 2) ** 2 + (coast[I(R.cx, R.cy)] < 40 ? 4000 : 0) + (!legacy && R.tiles < 700 ? 9000 : 0);
+      if (d < bestD) { bestD = d; baseId = R.id; }
+    }
+    bases.push(baseId);
+  } else {
+    // spread the gang base sites out: farthest-point sampling over big-enough regions
+    // prefer roomy districts (deep inland) so the base compound with its shops fits
+    let pool = regions;
+    for (const need of [13, 11, 9, 0]) {
+      const ok = regions.filter((R) => R.tiles >= 700 && (R.deep || 0) >= need);
+      if (ok.length >= nBases) { pool = ok; break; }
+    }
+    let first = pool[0], fd = -1;
+    for (const R of pool) { const d = Math.hypot(R.cx - mx, R.cy - my); if (d > fd) { fd = d; first = R; } }
+    bases.push(first.id);
+    while (bases.length < Math.min(nBases, pool.length)) {
+      let best = null, bd = -1;
+      for (const R of pool) {
+        if (bases.includes(R.id)) continue;
+        let m = Infinity;
+        for (const b of bases) m = Math.min(m, Math.hypot(R.cx - regions[b].cx, R.cy - regions[b].cy));
+        if (m > bd) { bd = m; best = R; }
+      }
+      bases.push(best.id);
+    }
   }
-  const base = regions[baseId];
-  base.base = true;
-  const q = [baseId];
+  const baseId = bases[0];
+  for (const b of bases) regions[b].base = true;
   for (const R of regions) R.tier = -1;
-  base.tier = 0;
+  const q = [];
+  for (const b of bases) { regions[b].tier = 0; q.push(b); }
   while (q.length) {
     const r = q.shift();
     for (const n of regions[r].neighbors) if (regions[n].tier < 0) { regions[n].tier = regions[r].tier + 1; q.push(n); }
@@ -139,10 +246,11 @@ export function generateWorld(seed) {
   for (const R of regions) if (R.tier < 0) R.tier = 1;
 
   const offset = rng.range(0, Math.PI * 2);
+  const center = nBases === 1 ? regions[baseId] : { cx: mx, cy: my };
   const factionRegions = [[], [], []];
   for (const R of regions) {
     if (R.base) continue;
-    let a = Math.atan2(R.cy - base.cy, R.cx - base.cx) - offset;
+    let a = Math.atan2(R.cy - center.cy, R.cx - center.cx) - offset;
     a = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
     R.faction = Math.min(2, Math.floor(a / (Math.PI * 2 / 3)));
     factionRegions[R.faction].push(R.id);
@@ -152,7 +260,7 @@ export function generateWorld(seed) {
     let best = -1, bs = -1;
     for (const id of factionRegions[f]) {
       const R = regions[id];
-      const s = R.tier * 1000 + Math.hypot(R.cx - base.cx, R.cy - base.cy) + R.tiles * 0.01;
+      const s = R.tier * 1000 + Math.hypot(R.cx - center.cx, R.cy - center.cy) + R.tiles * 0.01;
       if (s > bs) { bs = s; best = id; }
     }
     hqs[f] = best;
@@ -162,12 +270,12 @@ export function generateWorld(seed) {
   // ---------------------------------------------------------------- biomes + names
   const used = new Set();
   for (const R of regions) {
-    const elev = fbm(R.cx * 0.02, R.cy * 0.02, seed + 7, 3);
+    const elev = R.base ? 0 : fbm(R.cx * 0.02, R.cy * 0.02, seed + 7, 3);
     if (R.base) R.biome = 'base';
-    else if (R.coastTiles / R.tiles > 0.16) R.biome = 'beach';
+    else if (R.coastTiles / R.tiles > (type === 'archipelago' ? 0.62 : type === 'island' ? 0.3 : 0.16)) R.biome = 'beach';
     else if (elev > 0.6) R.biome = rng.chance(0.75) ? 'favela' : 'jungle';
     else R.biome = rng.weighted(FACTIONS[R.faction].biomes);
-    if (R.base) { R.name = 'QG da Laje'; continue; }
+    if (R.base) { R.name = PVP_BASE_NAMES[bases.indexOf(R.id)] || 'QG'; continue; }
     const parts = NAME_PARTS[R.biome];
     let name = '';
     for (let t = 0; t < 30; t++) {
@@ -183,7 +291,8 @@ export function generateWorld(seed) {
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const i = I(x, y);
     const c = coast[i];
-    if (c < 0) { tiles[i] = T.WATER; continue; }
+    if (!land[i]) { tiles[i] = T.WATER; continue; }
+    if (bridge[i]) { tiles[i] = T.BRIDGE; continue; }
     const R = regions[region[i]];
     let g = GROUND[R.biome];
     const n = fbm(x * 0.12, y * 0.12, gseed, 2);
@@ -191,14 +300,15 @@ export function generateWorld(seed) {
     if (R.biome === 'industrial' && n > 0.58) g = T.CONCRETE;
     if (R.biome === 'suburb' && n > 0.66) g = T.DIRT;
     if (R.biome === 'jungle' && n > 0.68) g = T.DIRT;
-    const sandW = 4.2 + fbm(x * 0.1, y * 0.1, gseed + 3, 2) * 2.2;
+    const sandW = (4.2 + fbm(x * 0.1, y * 0.1, gseed + 3, 2) * 2.2) * (type === 'archipelago' ? 0.6 : type === 'island' ? 0.85 : 1);
     if (c < sandW) g = T.SAND;
     else if (c < sandW + 2) g = T.CALCADAO;
+    else if (shore[i] < 2.2) g = T.CALCADAO;
     tiles[i] = g;
   }
 
   // ---------------------------------------------------------------- roads on region borders
-  const isLandGround = (t) => t !== T.WATER && t !== T.SAND && t !== T.CALCADAO;
+  const isLandGround = (t) => t !== T.WATER && t !== T.SAND && t !== T.CALCADAO && t !== T.BRIDGE;
   const roadMask = new Uint8Array(N);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const i = I(x, y), r = region[i];
@@ -218,14 +328,14 @@ export function generateWorld(seed) {
     const vert = !horiz || R.biome === 'downtown' || R.tiles > 1400;
     if (horiz) {
       const yy = R.cy + rng.int(-4, 4) + (R.biome === 'base' ? 12 : 0);
-      for (let x = R.minX; x <= R.maxX; x++) for (let k = 0; k < 2; k++) {
-        if (inb(x, yy + k) && region[I(x, yy + k)] === R.id && isLandGround(tiles[I(x, yy + k)])) roadMask[I(x, yy + k)] = 1;
+      for (let x = R.minX; x <= R.maxX; x++) for (let kk = 0; kk < 2; kk++) {
+        if (inb(x, yy + kk) && region[I(x, yy + kk)] === R.id && isLandGround(tiles[I(x, yy + kk)])) roadMask[I(x, yy + kk)] = 1;
       }
     }
     if (vert) {
       const xx = R.cx + rng.int(-4, 4) + (R.biome === 'base' ? 14 : 0);
-      for (let y = R.minY; y <= R.maxY; y++) for (let k = 0; k < 2; k++) {
-        if (inb(xx + k, y) && region[I(xx + k, y)] === R.id && isLandGround(tiles[I(xx + k, y)])) roadMask[I(xx + k, y)] = 1;
+      for (let y = R.minY; y <= R.maxY; y++) for (let kk = 0; kk < 2; kk++) {
+        if (inb(xx + kk, y) && region[I(xx + kk, y)] === R.id && isLandGround(tiles[I(xx + kk, y)])) roadMask[I(xx + kk, y)] = 1;
       }
     }
   }
@@ -253,7 +363,7 @@ export function generateWorld(seed) {
       if (x0 < 2 || y0 < 2 || x0 + w > W - 2 || y0 + h > H - 2) return false;
       for (let y = y0 - 1; y < y0 + h + 1; y++) for (let x = x0 - 1; x < x0 + w + 1; x++) {
         const t = tiles[I(x, y)];
-        if (t === T.WATER || t === T.SAND || t === T.CALCADAO) return false;
+        if (t === T.WATER || t === T.SAND || t === T.CALCADAO || t === T.BRIDGE) return false;
         if (reserved[I(x, y)]) return false;
       }
       let inRegion = 0;
@@ -263,8 +373,19 @@ export function generateWorld(seed) {
       return true;
     };
     const cands = [[R.cx, R.cy], [R.seedX, R.seedY]];
-    for (let k = 0; k < 40; k++) cands.push([R.cx + rng.int(-8, 8), R.cy + rng.int(-8, 8)]);
+    for (let kk = 0; kk < 40; kk++) cands.push([R.cx + rng.int(-8, 8), R.cy + rng.int(-8, 8)]);
     for (const [cx, cy] of cands) if (tryAt(cx, cy)) { placed = true; break; }
+    if (!placed && R.base) {
+      // bases need room for the shops: search a wider spiral, then a slightly smaller base
+      for (const [bw, bh] of [[23, 17], [19, 13], [15, 11]]) {
+        w = bw; h = bh;
+        for (let rr = 2; rr <= 30 && !placed; rr += 2) for (let a = 0; a < 16 && !placed; a++) {
+          const cx = Math.round(R.cx + Math.cos(a / 16 * Math.PI * 2) * rr), cy = Math.round(R.cy + Math.sin(a / 16 * Math.PI * 2) * rr);
+          if (tryAt(cx, cy)) placed = true;
+        }
+        if (placed) break;
+      }
+    }
     if (!placed) {
       w = 9; h = 9;
       for (const [cx, cy] of cands) if (tryAt(cx, cy)) { placed = true; break; }
@@ -282,7 +403,7 @@ export function generateWorld(seed) {
       const i = I(x, y);
       reserved[i] = 1;
       const inside = x >= C.x && x < C.x + C.w && y >= C.y && y < C.y + C.h;
-      if (!inside) { if (tiles[i] === T.WATER) continue; if (!roadMask[i] && tiles[i] !== T.SIDEWALK && tiles[i] !== T.STAIRS) tiles[i] = GROUND[R.biome] === T.METAL ? T.CONCRETE : GROUND[R.biome]; continue; }
+      if (!inside) { if (tiles[i] === T.WATER || tiles[i] === T.BRIDGE) continue; if (!roadMask[i] && tiles[i] !== T.SIDEWALK && tiles[i] !== T.STAIRS) tiles[i] = GROUND[R.biome] === T.METAL ? T.CONCRETE : GROUND[R.biome]; continue; }
       const edge = x === C.x || y === C.y || x === C.x + C.w - 1 || y === C.y + C.h - 1;
       const midX = C.x + (C.w >> 1), midY = C.y + (C.h >> 1);
       const isGate = (Math.abs(x - midX) <= gate && (y === C.y || y === C.y + C.h - 1)) ||
@@ -291,13 +412,20 @@ export function generateWorld(seed) {
     }
     tiles[I(C.coreX, C.coreY)] = T.PAD;
     if (R.base) {
+      const mx = Math.min(4, Math.floor(C.w / 4)), my = Math.min(3, Math.floor(C.h / 4));
+      const l = C.x + mx, r = C.x + C.w - 1 - mx, t = C.y + my, b = C.y + C.h - 1 - my;
       C.stations = [
-        { kind: 'arsenal', x: C.x + 4, y: C.y + 3 },
-        { kind: 'clinic', x: C.x + C.w - 5, y: C.y + 3 },
-        { kind: 'locker', x: C.x + 4, y: C.y + C.h - 4 },
-        { kind: 'vault', x: C.x + C.w - 5, y: C.y + C.h - 4 },
+        { kind: 'arsenal', x: l, y: t },
+        { kind: 'clinic', x: r, y: t },
+        { kind: 'locker', x: l, y: b },
+        { kind: 'vault', x: r, y: b },
+        { kind: 'garage', x: l, y: C.coreY },
       ];
+      C.garage = { x: (Math.min(l + 2.5, C.coreX - 1.5)) * TILE, y: (C.coreY + 0.5) * TILE };
     }
+    // turret slots around the core
+    const dx = Math.max(1, Math.min(4, (C.w >> 1) - 2)), dy = Math.max(1, Math.min(3, (C.h >> 1) - 2));
+    C.slots = [[-dx, -dy], [dx, -dy], [-dx, dy], [dx, dy]].map(([ox, oy]) => ({ x: (C.coreX + ox + 0.5) * TILE, y: (C.coreY + oy + 0.5) * TILE }));
   }
 
   // ---------------------------------------------------------------- buildings
@@ -313,26 +441,19 @@ export function generateWorld(seed) {
     }
     return true;
   };
-  const SPEC = {
-    favela: { per: 7, w: [2, 4], h: [2, 3], m: 1, fr: 1, style: 'favela' },
-    suburb: { per: 12, w: [3, 5], h: [3, 4], m: 1, fr: 1, style: 'house' },
-    downtown: { per: 16, w: [3, 7], h: [3, 6], m: 1, fr: 2, style: 'tower' },
-    industrial: { per: 20, w: [4, 8], h: [3, 5], m: 1, fr: 1, style: 'warehouse' },
-    beach: { per: 26, w: [3, 4], h: [2, 3], m: 1, fr: 1, style: 'kiosk' },
-    jungle: { per: 90, w: [2, 4], h: [2, 3], m: 1, fr: 1, style: 'ruin' },
-    base: { per: 24, w: [3, 6], h: [3, 5], m: 1, fr: 2, style: 'tower' },
-  };
   for (const R of regions) {
-    const S = SPEC[R.biome];
+    const S = BSPEC[R.biome];
     const attempts = R.tiles * 2;
     let n = 0;
     for (let a = 0; a < attempts && n < R.tiles / S.per; a++) {
-      let w = rng.int(S.w[0], S.w[1]), h = rng.int(S.h[0], S.h[1]), m = S.m, style = S.style, fr = S.fr;
-      if (R.biome === 'industrial' && rng.chance(0.4)) { style = 'container'; w = rng.int(2, 3); h = 1; m = 1; fr = 0; }
+      const style = rng.weighted(S.styles);
+      const st = STYLE[style];
+      const w = rng.int(st.w[0], st.w[1]), h = rng.int(st.h[0], st.h[1]);
       const x0 = rng.int(R.minX, R.maxX - w), y0 = rng.int(R.minY, R.maxY - h);
-      if (!canPlace(R.id, x0, y0, w, h, m)) continue;
+      if (!canPlace(R.id, x0, y0, w, h, st.m ?? 1)) continue;
       for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) tiles[I(x, y)] = T.BUILD;
-      buildings.push({ x: x0, y: y0, w, h, style, fr: Math.min(fr, h - 1), r: R.id, seed: rng.int(0, 1e9) });
+      const fr = Math.max(0, Math.min(h - 1, rng.int(st.fr[0], st.fr[1])));
+      buildings.push({ x: x0, y: y0, w, h, style, fr, ht: fr + (style === 'tower' ? 1 : 0), r: R.id, seed: rng.int(0, 1e9) });
       n++;
     }
   }
@@ -355,33 +476,190 @@ export function generateWorld(seed) {
 
   // ---------------------------------------------------------------- connectivity
   const world = {
-    seed, W, H, tiles, region, regions, buildings, coast, baseId, factionRegions, hqs,
-    props: [], lights: [], propGrid: null, lightGrid: null, reach: null, spawnTiles: null,
+    seed, type, size: sizeKey, W, H, tiles, region, regions, buildings, coast, baseId, bases, factionRegions, hqs,
+    props: [], lights: [], propGrid: null, lightGrid: null, reach: null, spawnTiles: null, roadTiles: null,
+    breakables: [], breakGrid: null, wires: [], wireGrid: null, smokers: [], holos: [],
   };
-  let reach = floodReach(world, base.compound.coreX, base.compound.coreY);
+  const b0 = regions[baseId].compound;
+  let reach = floodReach(world, b0.coreX, b0.coreY);
   for (const R of regions) {
     const C = R.compound;
     if (!reach[I(C.coreX, C.coreY)]) {
       carvePath(world, C.coreX, C.coreY, reach);
-      reach = floodReach(world, base.compound.coreX, base.compound.coreY);
+      reach = floodReach(world, b0.coreX, b0.coreY);
     }
   }
   world.reach = reach;
 
-  // spawn tiles per region (reachable, open, not inside compounds)
+  // spawn tiles per region (reachable, open, not inside compounds), and road tiles for vehicles
   world.spawnTiles = regions.map(() => []);
+  world.roadTiles = [];
   for (let i = 0; i < N; i++) {
     if (!reach[i] || region[i] < 0 || reserved[i]) continue;
     world.spawnTiles[region[i]].push(i);
+    if (tiles[i] === T.ROAD) world.roadTiles.push(i);
   }
 
-  // ---------------------------------------------------------------- props & lights
-  buildProps(world, rng);
+  // ---------------------------------------------------------------- props, lights & decoration
+  buildProps(world);
   return world;
 }
 
+// building styles: footprint size ranges and facade (front) rows = how tall it looks
+const STYLE = {
+  favela: { w: [2, 4], h: [2, 4], fr: [1, 2] },
+  house: { w: [3, 5], h: [3, 4], fr: [1, 1] },
+  shop: { w: [3, 5], h: [2, 3], fr: [1, 2] },
+  church: { w: [3, 4], h: [3, 4], fr: [2, 2] },
+  apartment: { w: [3, 6], h: [3, 5], fr: [2, 3] },
+  tower: { w: [3, 7], h: [4, 7], fr: [2, 4] },
+  club: { w: [4, 6], h: [3, 4], fr: [1, 2] },
+  warehouse: { w: [4, 8], h: [3, 5], fr: [1, 2] },
+  factory: { w: [4, 7], h: [3, 5], fr: [2, 2] },
+  container: { w: [2, 3], h: [1, 1], fr: [0, 0], m: 1 },
+  kiosk: { w: [3, 4], h: [2, 3], fr: [1, 1] },
+  ruin: { w: [2, 4], h: [2, 3], fr: [1, 1] },
+};
+const BSPEC = {
+  favela: { per: 7, styles: { favela: 1 } },
+  suburb: { per: 12, styles: { house: 6, shop: 3, church: 0.5, apartment: 1.2 } },
+  downtown: { per: 15, styles: { tower: 6, apartment: 2, shop: 1.5, club: 0.8 } },
+  industrial: { per: 19, styles: { warehouse: 5, factory: 1.5, container: 4 } },
+  beach: { per: 24, styles: { kiosk: 3, shop: 1 } },
+  jungle: { per: 90, styles: { ruin: 1 } },
+  base: { per: 22, styles: { tower: 2, apartment: 1, shop: 1 } },
+};
+
+// connected components of a 0/1 grid (4-neighborhood)
+function components(grid, W, H) {
+  const N = W * H;
+  const id = new Int32Array(N).fill(-1);
+  const size = [];
+  const q = new Int32Array(N);
+  for (let s = 0; s < N; s++) {
+    if (!grid[s] || id[s] >= 0) continue;
+    const c = size.length;
+    let h = 0, t = 0;
+    q[t++] = s; id[s] = c;
+    while (h < t) {
+      const i = q[h++], x = i % W;
+      for (const j of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W]) {
+        if (j < 0 || j >= N || !grid[j] || id[j] >= 0) continue;
+        id[j] = c; q[t++] = j;
+      }
+    }
+    size.push(t);
+  }
+  return { id, size };
+}
+
+// chamfer distance (in tiles) from the cells where src = 1
+function distField(src, W, H) {
+  const N = W * H;
+  const d = new Float32Array(N);
+  for (let i = 0; i < N; i++) d[i] = src[i] ? 0 : 1e9;
+  const D = Math.SQRT2;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x;
+    if (x > 0) d[i] = Math.min(d[i], d[i - 1] + 1);
+    if (y > 0) {
+      d[i] = Math.min(d[i], d[i - W] + 1);
+      if (x > 0) d[i] = Math.min(d[i], d[i - W - 1] + D);
+      if (x < W - 1) d[i] = Math.min(d[i], d[i - W + 1] + D);
+    }
+  }
+  for (let y = H - 1; y >= 0; y--) for (let x = W - 1; x >= 0; x--) {
+    const i = y * W + x;
+    if (x < W - 1) d[i] = Math.min(d[i], d[i + 1] + 1);
+    if (y < H - 1) {
+      d[i] = Math.min(d[i], d[i + W] + 1);
+      if (x < W - 1) d[i] = Math.min(d[i], d[i + W + 1] + D);
+      if (x > 0) d[i] = Math.min(d[i], d[i + W - 1] + D);
+    }
+  }
+  return d;
+}
+
+// Links separate land masses with straight bridges (2 tiles wide). Rivers get several bridges.
+function linkLand(land, bridge, W, H, riverAxis, uv, side) {
+  const I = (x, y) => y * W + x;
+  const lay = (x0, y0, dx, dy, len) => {
+    for (let s = 0; s <= len; s++) for (let w = 0; w < 2; w++) {
+      const x = x0 + dx * s + (dy ? w : 0), y = y0 + dy * s + (dx ? w : 0);
+      if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) continue;
+      if (!land[I(x, y)]) { land[I(x, y)] = 1; bridge[I(x, y)] = 1; }
+    }
+  };
+  // river: a bridge every ~48 tiles along the river
+  if (riverAxis) {
+    for (let v = 26; v < H - 10; v += 46) {
+      const u = Math.round(riverAxis.uc(v));
+      // walk across the river along u at this v
+      let a = -1, b = -1;
+      for (let du = -16; du <= 16; du++) {
+        const [x, y] = fromUV(u + du, v, W, H, side);
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        if (!land[I(x, y)]) { if (a < 0) a = du; b = du; }
+      }
+      if (a < 0) continue;
+      for (let du = a - 1; du <= b + 1; du++) for (let w = 0; w < 2; w++) {
+        const [x, y] = fromUV(u + du, v + w, W, H, side);
+        if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) continue;
+        if (!land[I(x, y)]) { land[I(x, y)] = 1; bridge[I(x, y)] = 1; }
+      }
+    }
+  }
+  for (let guard = 0; guard < 40; guard++) {
+    const comp = components(land, W, H);
+    if (comp.size.length <= 1) return;
+    let main = 0;
+    for (let c = 1; c < comp.size.length; c++) if (comp.size[c] > comp.size[main]) main = c;
+    // shortest straight water crossing from any other land mass into the main one
+    let best = null;
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+      const i = I(x, y);
+      if (!land[i] || comp.id[i] === main) continue;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (land[I(x + dx, y + dy)]) continue;
+        for (let s = 1; s < 60; s++) {
+          const xx = x + dx * s, yy = y + dy * s;
+          if (xx < 1 || yy < 1 || xx >= W - 1 || yy >= H - 1) break;
+          const j = I(xx, yy);
+          if (!land[j]) continue;
+          if (comp.id[j] === main && (!best || s < best.len)) best = { x, y, dx, dy, len: s };
+          break;
+        }
+      }
+    }
+    if (!best) {
+      // no straight crossing: L-shaped bridge to the nearest main-land tile
+      let src = -1, dst = -1, bd = Infinity;
+      for (let i = 0; i < W * H; i += 3) {
+        if (!land[i] || comp.id[i] === main) continue;
+        for (let j = 0; j < W * H; j += 5) {
+          if (!land[j] || comp.id[j] !== main) continue;
+          const d = Math.abs((i % W) - (j % W)) + Math.abs(((i / W) | 0) - ((j / W) | 0));
+          if (d < bd) { bd = d; src = i; dst = j; }
+        }
+      }
+      if (src < 0) return;
+      const sx = src % W, sy = (src / W) | 0, tx = dst % W, ty = (dst / W) | 0;
+      lay(Math.min(sx, tx), sy, 1, 0, Math.abs(tx - sx));
+      lay(tx, Math.min(sy, ty), 0, 1, Math.abs(ty - sy));
+      continue;
+    }
+    lay(best.x, best.y, best.dx, best.dy, best.len);
+  }
+}
+function fromUV(u, v, W, H, side) {
+  if (side === 0) return [u, H - 1 - v];
+  if (side === 1) return [W - 1 - v, u];
+  if (side === 2) return [u, v];
+  return [v, u];
+}
+
 function floodReach(world, sx, sy) {
-  const { tiles } = world;
+  const { tiles, W, H } = world;
   const reach = new Uint8Array(W * H);
   const q = new Int32Array(W * H);
   let h = 0, t = 0;
@@ -397,10 +675,10 @@ function floodReach(world, sx, sy) {
   return reach;
 }
 
-// Opens a path from (sx, sy) to the reachable area, cutting through trees/walls (and, if it must, a building).
+// Opens a path from (sx, sy) to the reachable area, cutting through trees/walls (then a building, then water as a bridge).
 function carvePath(world, sx, sy, reach) {
-  const { tiles } = world;
-  for (const allowBuild of [false, true]) {
+  const { tiles, W, H } = world;
+  for (const pass of [0, 1, 2]) {
     const prev = new Int32Array(W * H).fill(-2);
     const q = new Int32Array(W * H);
     let h = 0, t = 0, found = -1;
@@ -411,7 +689,7 @@ function carvePath(world, sx, sy, reach) {
       for (const j of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1]) {
         if (j < 0 || prev[j] !== -2) continue;
         const tt = tiles[j];
-        if (tt === T.WATER || (tt === T.BUILD && !allowBuild)) continue;
+        if ((tt === T.WATER && pass < 2) || (tt === T.BUILD && pass < 1)) continue;
         prev[j] = i;
         if (reach[j]) { found = j; break; }
         q[t++] = j;
@@ -429,62 +707,136 @@ function carvePath(world, sx, sy, reach) {
           world.buildings.splice(bi, 1);
         }
       }
-      if (SOLID[tiles[i]]) tiles[i] = T.CONCRETE;
+      if (tiles[i] === T.WATER) tiles[i] = T.BRIDGE;
+      else if (SOLID[tiles[i]]) tiles[i] = T.CONCRETE;
       i = prev[i];
     }
     return;
   }
 }
 
-function buildProps(world, rng) {
-  const { tiles, regions, seed } = world;
+// ---------------------------------------------------------------- props, lights, signs, wires, breakables
+function buildProps(world) {
+  const { tiles, regions, seed, W, H } = world;
   const props = world.props, lights = world.lights;
   const I = (x, y) => y * W + x;
   const ps = seed ^ 0xfacade;
+  const tAt = (x, y) => (x < 0 || y < 0 || x >= W || y >= H ? T.WATER : tiles[I(x, y)]);
+  const near = (x, y, t) => tAt(x - 1, y) === t || tAt(x + 1, y) === t || tAt(x, y - 1) === t || tAt(x, y + 1) === t;
+  const poles = [];
+  const brk = (type, x, y, v = 0) => world.breakables.push({ id: world.breakables.length, type, x, y, v });
+  const P = (type, x, y, v = 0, extra) => { const p = { type, x, y, v }; if (extra) Object.assign(p, extra); props.push(p); return p; };
   for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
     const i = I(x, y), t = tiles[i];
     const r = world.region[i];
-    if (r < 0) continue;
-    const biome = regions[r].biome;
-    const h = hash2(x, y, ps);
-    const px = x * TILE + 8, py = y * TILE + 12;
-    if (t === T.SAND) {
-      if (world.coast[i] > 1.8 && h < 0.045) props.push({ type: 'palm', x: px, y: py, v: (h * 1000) | 0 });
-      else if (h > 0.96) props.push({ type: 'umbrella', x: px, y: py, v: (h * 1000) | 0 });
-    } else if (t === T.SIDEWALK) {
-      const nearRoad = tiles[i - 1] === T.ROAD || tiles[i + 1] === T.ROAD || tiles[i - W] === T.ROAD || tiles[i + W] === T.ROAD;
-      if (nearRoad && (x * 7 + y * 13) % 11 === 0 && h < 0.7) {
-        props.push({ type: 'lamp', x: px, y: py, v: 0 });
-        lights.push({ x: px, y: py - 26, r: 48, c: h < 0.35 ? '#ff4fd8' : '#ffd88a' });
-      } else if (h < 0.03 && biome !== 'downtown') props.push({ type: 'palm', x: px, y: py, v: (h * 1000) | 0 });
-    } else if (t === T.CALCADAO) {
-      if (h < 0.05) props.push({ type: 'palm', x: px, y: py, v: (h * 1000) | 0 });
-      else if (h > 0.985) {
-        props.push({ type: 'lamp', x: px, y: py, v: 1 });
-        lights.push({ x: px, y: py - 26, r: 50, c: '#22e5ff' });
+    if (r < 0) {
+      if (t === T.BRIDGE && (x + y) % 9 === 0 && (tAt(x - 1, y) === T.WATER || tAt(x, y - 1) === T.WATER)) {
+        P('lamp', x * TILE + 8, y * TILE + 12, 1); lights.push({ x: x * TILE + 8, y: y * TILE - 14, r: 46, c: '#22e5ff' });
       }
+      continue;
+    }
+    const biome = regions[r].biome;
+    const h = hash2(x, y, ps), h2 = hash2(x, y, ps + 17);
+    const px = x * TILE + 8, py = y * TILE + 12;
+    const v = (h2 * 1000) | 0;
+    if (t === T.SAND) {
+      if (world.coast[i] > 1.8 && h < 0.045) P('palm', px, py, v);
+      else if (h > 0.96) P('umbrella', px, py, v);
+      else if (h > 0.945) P('chair', px, py, v);
+      else if (h2 < 0.0025 && world.coast[i] > 2) { P('lifeguard', px, py, v); lights.push({ x: px, y: py - 30, r: 40, c: '#ff3b5c' }); }
+    } else if (t === T.SIDEWALK) {
+      const nearRoad = near(x, y, T.ROAD);
+      if (nearRoad && (x * 7 + y * 13) % 11 === 0 && h < 0.7) {
+        P('lamp', px, py, 0);
+        lights.push({ x: px, y: py - 26, r: 48, c: h < 0.35 ? '#ff4fd8' : '#ffd88a' });
+      } else if (h < 0.03 && biome !== 'downtown') P('palm', px, py, v);
+      else if (h < 0.06) P('bin', px, py, v);
+      else if (h < 0.075) P('bench', px, py, v);
+      else if (h < 0.085) P('hydrant', px, py, v);
+      else if (h < 0.095 && biome === 'downtown') { P('vending', px, py, v); lights.push({ x: px, y: py - 10, r: 26, c: v % 2 ? '#22e5ff' : '#ff4fd8' }); }
+      else if (h < 0.102 && nearRoad && tAt(x + 1, y) === T.SIDEWALK) { P('busstop', px + 4, py, v); lights.push({ x: px + 4, y: py - 12, r: 30, c: '#9af0ff' }); }
+      else if (h < 0.108 && (biome === 'downtown' || biome === 'suburb')) { P('banca', px, py, v); lights.push({ x: px, y: py - 10, r: 22, c: '#ffd88a' }); }
+      else if (h < 0.125 && biome !== 'suburb') P('bags', px, py, v);
+      else if (h < 0.132 && biome === 'downtown') { P('cart', px, py, v); lights.push({ x: px, y: py - 10, r: 26, c: '#ffb84a', flicker: true }); world.smokers.push({ x: px + 2, y: py - 14, k: 'grill' }); }
+      else if (h < 0.140 && (biome === 'industrial' || biome === 'downtown')) P('cone', px, py, v);
+      else if (h < 0.146 && biome === 'suburb') P('plant', px, py, v);
+      else if (h < 0.150 && nearRoad) brk('transformer', px, py, v);
+      else if (biome === 'suburb' && nearRoad && (x * 5 + y * 3) % 13 === 0 && h > 0.85) { poles.push({ x: px, y: py }); P('pole', px, py, v); }
+    } else if (t === T.STAIRS) {
+      if ((x * 3 + y * 7) % 9 === 0 && h > 0.45) { poles.push({ x: px, y: py }); P('pole', px, py, v); }
+      else if (h < 0.035) P('bags', px, py, v);
+      else if (h < 0.05 && near(x, y, T.BUILD)) brk('gastank', px, py, v);
+      else if (h < 0.058) P('bin', px, py, v);
+    } else if (t === T.CALCADAO) {
+      if (h < 0.05) P('palm', px, py, v);
+      else if (h > 0.985) { P('lamp', px, py, 1); lights.push({ x: px, y: py - 26, r: 50, c: '#22e5ff' }); }
+      else if (h > 0.97) { P('coco', px, py, v); lights.push({ x: px, y: py - 10, r: 24, c: '#ffd88a' }); }
+      else if (h > 0.955) P('bench', px, py, v);
+      else if (h > 0.948) P('bin', px, py, v);
     } else if (t === T.GRASS) {
-      if ((biome === 'beach' || biome === 'suburb' || biome === 'base') && h < 0.025) props.push({ type: 'palm', x: px, y: py, v: (h * 1000) | 0 });
-      else if (biome === 'jungle' && h < 0.04) props.push({ type: 'banana', x: px, y: py, v: (h * 1000) | 0 });
-      else if (biome === 'favela' && h < 0.04) props.push({ type: 'banana', x: px, y: py, v: (h * 1000) | 0 });
-    } else if (t === T.DIRT || t === T.METAL || t === T.STAIRS) {
-      if ((biome === 'favela' || biome === 'industrial') && h < 0.014) {
-        props.push({ type: 'barrel', x: px, y: py, v: 0 });
+      if ((biome === 'beach' || biome === 'suburb' || biome === 'base') && h < 0.025) P('palm', px, py, v);
+      else if ((biome === 'jungle' || biome === 'favela') && h < 0.04) P('banana', px, py, v);
+      else if (biome === 'suburb' && h < 0.035) P('plant', px, py, v);
+      else if (biome === 'favela' && h > 0.985) brk('gastank', px, py, v);
+    } else if (t === T.DIRT) {
+      if (biome === 'favela' && h < 0.014) {
+        P('barrel', px, py, 0);
         lights.push({ x: px, y: py - 8, r: 40, c: '#ff8a3d', flicker: true });
-      } else if (biome === 'favela' && h > 0.975) props.push({ type: 'banana', x: px, y: py, v: (h * 1000) | 0 });
+      } else if (biome === 'favela' && h > 0.975) P('banana', px, py, v);
+      else if (biome === 'favela' && h > 0.955) P('bags', px, py, v);
+      else if (biome === 'favela' && h > 0.94 && near(x, y, T.BUILD)) brk('gastank', px, py, v);
+      else if (h > 0.93 && h < 0.94) P('tires', px, py, v);
+    } else if (t === T.METAL) {
+      if (h < 0.012) { P('barrel', px, py, 0); lights.push({ x: px, y: py - 8, r: 40, c: '#ff8a3d', flicker: true }); }
+      else if (h < 0.035) brk('xbarrel', px, py, v);
+      else if (h < 0.06) P('crate', px, py, v);
+      else if (h < 0.075) P('pallet', px, py, v);
+      else if (h < 0.083) P('dumpster', px, py, v);
+      else if (h < 0.09) P('drums', px, py, v);
+    } else if (t === T.CONCRETE) {
+      if (biome === 'downtown' && h < 0.012) { P('vending', px, py, v); lights.push({ x: px, y: py - 10, r: 26, c: '#22e5ff' }); }
+      else if (biome === 'downtown' && h < 0.03) P('planter', px, py, v);
+      else if ((biome === 'downtown' || biome === 'industrial') && h < 0.04) P('bin', px, py, v);
+      else if (biome === 'industrial' && h < 0.06) brk('xbarrel', px, py, v);
+      else if (biome === 'industrial' && h < 0.08) P('crate', px, py, v);
     } else if (t === T.ROAD) {
-      if (h < 0.006) props.push({ type: 'car', x: px, y: py, v: (h * 100000) | 0 });
+      if (h < 0.006) brk('car', px, py, (h * 100000) | 0);
+      else if (hash2(x, y, seed + 5) < 0.004) world.smokers.push({ x: x * TILE + 8, y: y * TILE + 8, k: 'steam' });
     }
   }
-  // signs on buildings (neon), + window light
+  // signs, billboards, holograms, window light, chimneys
   for (const b of world.buildings) {
-    const h = hash2(b.x, b.y, ps + 1);
-    if ((b.style === 'tower' || b.style === 'house' || b.style === 'kiosk' || b.style === 'warehouse') && h < 0.6 && b.w >= 3) {
-      const colors = ['#ff3fa4', '#22e5ff', '#ffd23f', '#3ddc84', '#a66bff', '#ff6a2b'];
-      b.sign = { c: colors[(h * 1000 | 0) % colors.length], text: SIGNS[(h * 7919 | 0) % SIGNS.length] };
-      lights.push({ x: (b.x + b.w / 2) * TILE, y: (b.y + b.h - b.fr) * TILE + 4, r: 46 + b.w * 3, c: b.sign.c, flicker: h < 0.1 });
+    const h = hash2(b.x, b.y, ps + 1), h2 = hash2(b.x, b.y, ps + 2), h3 = hash2(b.x, b.y, ps + 3);
+    const rh = (b.h - b.fr) * TILE;
+    const brandOf = (cats, hh) => { const list = BRANDS.map((B, i) => [B, i]).filter(([B]) => cats.includes(B.cat)); return list[(hh * 9973 | 0) % list.length][1]; };
+    const sx = (b.x + b.w / 2) * TILE, sy = b.y * TILE + rh + 4;
+    let sign = null;
+    if (b.style === 'shop' || (b.style === 'house' && h < 0.35) || b.style === 'kiosk') sign = { kind: 'panel', brand: brandOf(['food', 'shop', 'night'], h2) };
+    else if (b.style === 'tower') sign = h < 0.5 ? { kind: 'panel', brand: brandOf(['corp', 'night', 'shop'], h2) } : h < 0.85 ? { kind: 'vertical', brand: brandOf(['corp', 'night', 'food'], h2), right: h3 < 0.5 } : null;
+    else if (b.style === 'apartment' && h < 0.55) sign = { kind: 'vertical', brand: brandOf(['night', 'food', 'shop'], h2), right: h3 < 0.5 };
+    else if ((b.style === 'warehouse' || b.style === 'factory') && h < 0.6 && b.w >= 4) sign = { kind: 'panel', brand: brandOf(['ind'], h2) };
+    else if (b.style === 'club') sign = { kind: 'marquee', brand: brandOf(['night'], h2) };
+    else if (b.style === 'church') sign = { kind: 'cross' };
+    else if (b.style === 'favela' && h < 0.12 && b.w >= 3) sign = { kind: 'panel', brand: brandOf(['food', 'night', 'shop'], h2) };
+    if (sign) {
+      b.sign = sign;
+      sign.c = sign.kind === 'cross' ? '#ff3b5c' : BRANDS[sign.brand].c;
+      const lx = sign.kind === 'vertical' ? (sign.right ? (b.x + b.w) * TILE - 2 : b.x * TILE + 2) : sx;
+      const ly = sign.kind === 'vertical' ? b.y * TILE + rh + b.fr * 6 : sy;
+      lights.push({ x: lx, y: ly, r: 46 + b.w * 4, c: sign.c, flicker: h3 < 0.12 });
+    }
+    // rooftop billboards (towers, apartments, warehouses) and holograms (downtown towers)
+    if ((b.style === 'tower' || b.style === 'apartment' || b.style === 'warehouse') && b.w >= 4 && rh >= 32 && h2 > 0.62) {
+      b.board = { brand: brandOf(['corp', 'food', 'night', 'shop'], h3) };
+      lights.push({ x: sx, y: b.y * TILE + 10, r: 54, c: BRANDS[b.board.brand].c });
+    } else if (b.style === 'tower' && b.fr >= 3 && b.w >= 4 && h3 > 0.55) {
+      const brand = brandOf(['corp', 'night', 'food'], h);
+      world.holos.push({ x: sx, y: b.y * TILE + rh / 2, brand, seed: (h * 1000) | 0 });
+      lights.push({ x: sx, y: b.y * TILE + rh / 2 - 16, r: 62, c: BRANDS[brand].c });
     }
     if (b.style === 'favela' && h < 0.5) lights.push({ x: (b.x + b.w / 2) * TILE, y: (b.y + b.h) * TILE - 6, r: 26, c: '#ffcf7a' });
+    if (b.style === 'factory' || (b.style === 'warehouse' && h3 < 0.25)) world.smokers.push({ x: b.x * TILE + 8 + ((h2 * (b.w - 1)) | 0) * TILE, y: b.y * TILE + 2, k: 'smoke' });
+    if (b.style === 'club') lights.push({ x: sx, y: (b.y + b.h) * TILE - 4, r: 60, c: '#ff3fa4', flicker: true });
   }
   // compound cores & base stations
   for (const R of regions) {
@@ -495,35 +847,50 @@ function buildProps(world, rng) {
       lights.push({ x: s.x * TILE + 8, y: s.y * TILE, r: 50, c: STATION_COLORS[s.kind] });
     }
   }
+  // power lines between poles ("gatos" in the favela)
+  for (let a = 0; a < poles.length; a++) {
+    let links = 0;
+    for (let b = a + 1; b < poles.length && links < 2; b++) {
+      const d = Math.hypot(poles[a].x - poles[b].x, poles[a].y - poles[b].y);
+      if (d > 8 && d < 7 * TILE) { world.wires.push({ x1: poles[a].x, y1: poles[a].y - 30, x2: poles[b].x, y2: poles[b].y - 30 }); links++; }
+    }
+  }
   // buckets
   const cw = Math.ceil(W / CHUNK), ch = Math.ceil(H / CHUNK);
-  world.propGrid = Array.from({ length: cw * ch }, () => []);
-  world.lightGrid = Array.from({ length: cw * ch }, () => []);
-  const bucket = (px, py) => Math.min(ch - 1, Math.floor(py / TILE / CHUNK)) * cw + Math.min(cw - 1, Math.floor(px / TILE / CHUNK));
-  for (const p of props) world.propGrid[bucket(p.x, p.y)].push(p);
-  for (const l of lights) world.lightGrid[bucket(l.x, l.y)].push(l);
+  const bucket = (px, py) => Math.max(0, Math.min(ch - 1, Math.floor(py / TILE / CHUNK))) * cw + Math.max(0, Math.min(cw - 1, Math.floor(px / TILE / CHUNK)));
+  const grid = (list, fx = (o) => o.x, fy = (o) => o.y) => {
+    const g = Array.from({ length: cw * ch }, () => []);
+    for (const o of list) g[bucket(fx(o), fy(o))].push(o);
+    return g;
+  };
+  world.propGrid = grid(props);
+  world.lightGrid = grid(lights);
+  world.breakGrid = grid(world.breakables);
+  world.wireGrid = grid(world.wires, (o) => (o.x1 + o.x2) / 2, (o) => (o.y1 + o.y2) / 2);
+  world.smokeGrid = grid(world.smokers);
+  world.holoGrid = grid(world.holos);
   world.gridW = cw; world.gridH = ch;
+  world.bucket = bucket;
 }
 
-export const STATION_COLORS = { arsenal: '#ff3f8e', clinic: '#3ddc84', locker: '#22e5ff', vault: '#ffd23f' };
-const SIGNS = ['BAR', 'LAN', 'AÇAÍ', '24H', 'BAILE', 'FARMA', 'CHIPS', 'PASTEL', 'SUCO', 'HOTEL', 'TATTOO', 'ROBÔ', 'CAFÉ', 'LOJA', 'BOTECO', 'NET', 'MODS', 'SAMBA'];
+export const STATION_COLORS = { arsenal: '#ff3f8e', clinic: '#3ddc84', locker: '#22e5ff', vault: '#ffd23f', garage: '#ff8a3d' };
 
 // ---------------------------------------------------------------- queries & collision
-export const tileAt = (world, tx, ty) => (tx < 0 || ty < 0 || tx >= W || ty >= H ? T.WATER : world.tiles[ty * W + tx]);
+export const tileAt = (world, tx, ty) => (tx < 0 || ty < 0 || tx >= world.W || ty >= world.H ? T.WATER : world.tiles[ty * world.W + tx]);
 
 export function solidAt(world, px, py) {
   return SOLID[tileAt(world, Math.floor(px / TILE), Math.floor(py / TILE))] === 1;
 }
 export function opaqueAt(world, px, py) {
   const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE);
-  if (tx < 0 || ty < 0 || tx >= W || ty >= H) return true;
-  return OPAQUE[world.tiles[ty * W + tx]] === 1;
+  if (tx < 0 || ty < 0 || tx >= world.W || ty >= world.H) return true;
+  return OPAQUE[world.tiles[ty * world.W + tx]] === 1;
 }
 
 export function regionAt(world, px, py) {
   const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE);
-  if (tx < 0 || ty < 0 || tx >= W || ty >= H) return -1;
-  return world.region[ty * W + tx];
+  if (tx < 0 || ty < 0 || tx >= world.W || ty >= world.H) return -1;
+  return world.region[ty * world.W + tx];
 }
 
 export function boxHits(world, x, y, r) {
@@ -555,6 +922,25 @@ export function moveBox(world, e, dx, dy, r) {
   }
 }
 
+// Nearest open (walkable) spot to a pixel position, searching outward ring by ring.
+export function nearestOpen(world, px, py, r = 5) {
+  if (!boxHits(world, px, py, r)) return { x: px, y: py };
+  const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE);
+  for (let d = 1; d < 30; d++) {
+    let best = null, bd = Infinity;
+    for (let y = ty - d; y <= ty + d; y++) for (let x = tx - d; x <= tx + d; x++) {
+      if (Math.max(Math.abs(x - tx), Math.abs(y - ty)) !== d) continue;
+      const cx = x * TILE + 8, cy = y * TILE + 8;
+      if (boxHits(world, cx, cy, r)) continue;
+      if (world.reach && !world.reach[y * world.W + x]) continue;
+      const dd = (cx - px) ** 2 + (cy - py) ** 2;
+      if (dd < bd) { bd = dd; best = { x: cx, y: cy }; }
+    }
+    if (best) return best;
+  }
+  return { x: px, y: py };
+}
+
 export function lineOfSight(world, x0, y0, x1, y1) {
   const d = Math.hypot(x1 - x0, y1 - y0);
   const steps = Math.ceil(d / 6);
@@ -581,8 +967,8 @@ export function bfsField(world, tx, ty, radius) {
   const start = radius * size + radius;
   dist[start] = 0; q[t++] = start;
   while (h < t) {
-    const k = q[h++], lx = k % size, ly = (k / size) | 0;
-    const d = dist[k] + 1;
+    const kk = q[h++], lx = kk % size, ly = (kk / size) | 0;
+    const d = dist[kk] + 1;
     for (let n = 0; n < 4; n++) {
       const nx = lx + (n === 0 ? 1 : n === 1 ? -1 : 0), ny = ly + (n === 2 ? 1 : n === 3 ? -1 : 0);
       if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
@@ -615,4 +1001,27 @@ export function fieldDir(world, f, px, py) {
   const txp = (tx + bx) * TILE + 8, typ = (ty + by) * TILE + 8;
   const vx = txp - px, vy = typ - py, l = Math.hypot(vx, vy) || 1;
   return { x: vx / l, y: vy / l };
+}
+
+// Small top-down image of a world for previews and the map screen (1 pixel per tile).
+export function mapImageData(world, out) {
+  const { W, H, tiles } = world;
+  const d = out.data;
+  const BIOME = { base: [106, 100, 120], beach: [74, 138, 74], favela: [154, 90, 58], downtown: [90, 90, 112], suburb: [63, 127, 67], industrial: [79, 88, 102], jungle: [42, 106, 50] };
+  for (let i = 0; i < W * H; i++) {
+    const t = tiles[i];
+    let c;
+    if (t === T.WATER) c = [16, 60, 100];
+    else if (t === T.SAND) c = [214, 190, 130];
+    else if (t === T.CALCADAO) c = [200, 200, 190];
+    else if (t === T.ROAD) c = [34, 32, 44];
+    else if (t === T.BRIDGE) c = [150, 120, 90];
+    else if (t === T.SIDEWALK || t === T.STAIRS) c = [110, 106, 120];
+    else if (t === T.BUILD) c = [70, 62, 84];
+    else if (t === T.WALL) c = [180, 176, 196];
+    else if (t === T.TREE) c = [24, 80, 34];
+    else c = BIOME[world.regions[world.region[i]]?.biome] || [80, 80, 80];
+    d[i * 4] = c[0]; d[i * 4 + 1] = c[1]; d[i * 4 + 2] = c[2]; d[i * 4 + 3] = 255;
+  }
+  return out;
 }

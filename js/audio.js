@@ -61,7 +61,28 @@ function tone(t, dur, { wave = 'square', f = 440, f2, v = 0.3, out, attack = 0.0
   o.start(t); o.stop(t + dur + 0.05);
 }
 
-const LIMIT = { pistol: 0.04, smg: 0.05, hit: 0.03, ebullet: 0.05, die: 0.04, cash: 0.06, spark: 0.05, punch: 0.04 };
+const LIMIT = { pistol: 0.04, smg: 0.05, hit: 0.03, ebullet: 0.05, die: 0.04, cash: 0.06, spark: 0.05, punch: 0.04, flame: 0.09, tmg: 0.06, zap: 0.08 };
+
+// Flying vehicle engine hum (a looping synth that follows speed). level 0 = off, 1 = full throttle.
+let engine = null;
+export function setEngine(level, pitch = 1) {
+  if (!ac || ac.state !== 'running') return;
+  if (!engine) {
+    const o1 = ac.createOscillator(), o2 = ac.createOscillator();
+    o1.type = 'sawtooth'; o2.type = 'square';
+    const fl = ac.createBiquadFilter(); fl.type = 'lowpass'; fl.frequency.value = 500; fl.Q.value = 4;
+    const g = ac.createGain(); g.gain.value = 0;
+    o1.connect(fl); o2.connect(fl); fl.connect(g); g.connect(sfxBus);
+    o1.start(); o2.start();
+    engine = { o1, o2, fl, g };
+  }
+  const t = ac.currentTime;
+  const f = 55 * pitch * (1 + level * 0.8);
+  engine.o1.frequency.setTargetAtTime(f, t, 0.1);
+  engine.o2.frequency.setTargetAtTime(f * 1.505, t, 0.1);
+  engine.fl.frequency.setTargetAtTime(300 + level * 900, t, 0.1);
+  engine.g.gain.setTargetAtTime(level > 0 ? 0.035 + level * 0.04 : 0, t, 0.15);
+}
 
 // x, y: world position (for distance + stereo); omit for UI sounds.
 export function sfx(name, x, y, volume = 1) {
@@ -119,6 +140,18 @@ export function sfx(name, x, y, volume = 1) {
     case 'enemyup': tone(t, 0.3, { wave: 'sawtooth', f: 200, f2: 600, v: 0.15, out }); tone(t + 0.15, 0.3, { wave: 'square', f: 300, f2: 900, v: 0.08, out }); break;
     case 'respawn': tone(t, 0.4, { wave: 'triangle', f: 300, f2: 900, v: 0.2, out }); break;
     case 'death': tone(t, 0.8, { wave: 'sawtooth', f: 400, f2: 50, v: 0.2, out }); noise(t, 0.5, { f: 800, f2: 100, v: 0.4, out }); break;
+    case 'flame': noise(t, 0.16, { type: 'bandpass', f: 900, f2: 500, q: 0.8, v: 0.35, out }); noise(t, 0.12, { f: 300, v: 0.25, out }); break;
+    case 'tmg': tone(t, 0.05, { f: 1100, f2: 300, v: 0.12, out }); noise(t, 0.03, { type: 'highpass', f: 3000, v: 0.16, out }); break;
+    case 'zap': tone(t, 0.18, { wave: 'sawtooth', f: 1800, f2: 200, v: 0.14, out }); noise(t, 0.15, { type: 'highpass', f: 5000, v: 0.25, out }); break;
+    case 'venter': tone(t, 0.3, { wave: 'sawtooth', f: 80, f2: 220, v: 0.15, out }); tone(t + 0.1, 0.2, { wave: 'square', f: 440, f2: 660, v: 0.06, out }); break;
+    case 'vexit': tone(t, 0.25, { wave: 'sawtooth', f: 220, f2: 70, v: 0.12, out }); break;
+    case 'vboom': noise(t, 1.0, { f: 900, f2: 60, v: 1.0, out }); tone(t, 0.8, { wave: 'sine', f: 70, f2: 22, v: 0.9, out }); tone(t, 0.4, { wave: 'sawtooth', f: 400, f2: 40, v: 0.2, out }); break;
+    case 'zapboom': noise(t, 0.6, { type: 'highpass', f: 3000, v: 0.6, out }); tone(t, 0.5, { wave: 'sawtooth', f: 2000, f2: 80, v: 0.25, out }); tone(t, 0.4, { wave: 'sine', f: 90, f2: 30, v: 0.6, out }); break;
+    case 'follower': [523, 784, 1046].forEach((f, i) => tone(t + i * 0.08, 0.18, { wave: 'triangle', f, v: 0.16, out })); break;
+    case 'cup': [392, 523, 784].forEach((f, i) => tone(t + i * 0.06, 0.2, { wave: 'square', f, v: 0.08, out })); break;
+    case 'wp': tone(t, 0.1, { wave: 'sine', f: 1320, v: 0.15, out }); tone(t + 0.1, 0.15, { wave: 'sine', f: 1760, v: 0.12, out }); break;
+    case 'land': tone(t, 0.4, { wave: 'sawtooth', f: 300, f2: 60, v: 0.15, out }); noise(t + 0.3, 0.2, { f: 600, v: 0.3, out }); break;
+    case 'save': tone(t, 0.05, { wave: 'sine', f: 1500, v: 0.05, out }); break;
     default: tone(t, 0.05, { f: 600, v: 0.1, out });
   }
 }

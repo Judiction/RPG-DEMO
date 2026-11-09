@@ -1,4 +1,4 @@
-// Game data: weapons (arms), body mods, enemy factions and tiers, names, colors.
+// Game data: weapons (arms), body mods, vehicles, turrets, upgrades, enemy factions and tiers, names, colors.
 // Tweak numbers here to rebalance the game.
 
 export const TILE = 16;
@@ -6,7 +6,12 @@ export const TILE = 16;
 export const GAME_NAME = 'NEON QUEBRADA';
 
 // ------------------------------------------------------------------ colors
-export const GANG_COLORS = ['#ff3f8e', '#3ddc84', '#ff8a3d', '#ffd23f'];
+// Gang colors (PvE: the host's gang color; PvP: players pick their gang by color).
+export const GANG_COLORS = ['#ff3f8e', '#3ddc84', '#ff8a3d', '#f2f2f2', '#4f7bff', '#ffd23f'];
+export const GANG_COLOR_NAMES = ['Rosa', 'Verde', 'Laranja', 'Branco', 'Azul', 'Ouro'];
+export const GANG_DEFAULT_NAMES = ['Bonde Rosa', 'Tropa Verde', 'Família Laranja', 'Comando Branco', 'Bonde Azul', 'Tropa de Ouro'];
+// Personal name colors: name tag, map dot and waypoint.
+export const NAME_COLORS = ['#ffffff', '#ff3f8e', '#22e5ff', '#ffd23f', '#3ddc84', '#ff8a3d', '#a66bff', '#ff6a6a', '#9af0ff', '#c8ff3f'];
 
 export const FACTIONS = [
   {
@@ -29,8 +34,19 @@ export const FACTIONS = [
   },
 ];
 
+// ------------------------------------------------------------------ maps
+export const MAP_TYPES = {
+  coastal: { name: 'Coastal', desc: 'A big city on the ocean, with a long beach and boardwalk.' },
+  island: { name: 'Island', desc: 'One big island surrounded by sea. Beaches all around.' },
+  lakes: { name: 'Lakes', desc: 'Coastal city dotted with lagoons and lakeside promenades.' },
+  river: { name: 'River', desc: 'A wide river cuts the city in two. Bridges are choke points.' },
+  archipelago: { name: 'Archipelago', desc: 'Several islands linked by long bridges.' },
+};
+export const MAP_TYPE_IDS = Object.keys(MAP_TYPES);
+export const MAP_SIZES = { S: { n: 192, name: 'Small', bases: 4 }, M: { n: 256, name: 'Medium', bases: 6 }, L: { n: 320, name: 'Large', bases: 6 } };
+
 // ------------------------------------------------------------------ enemy tiers
-// size = sprite scale ("bulk"). attack: melee | gun | shotgun | burst | slam | rocket
+// bulk = sprite scale. attack: melee | gun | shotgun | burst | slam | rocket
 export const TIERS = [
   null,
   { hp: 28, dmg: 5, speed: 54, bulk: 0.85, xp: 7, cash: 8, attacks: ['melee', 'gun'], aggro: 7 },
@@ -53,7 +69,7 @@ export const ATTACKS = {
 };
 
 // ------------------------------------------------------------------ player weapons (arms)
-// kind: melee | ranged | whip | slam | rocket | beam
+// kind: melee | ranged | whip | slam | rocket | beam | flame
 export const WEAPONS = {
   fist: {
     name: 'Cyber Fist', pt: 'Punho Cibernético', kind: 'melee', dmg: 10, cd: 0.34, range: 22, arc: 1.6, knock: 70,
@@ -78,6 +94,10 @@ export const WEAPONS = {
   hammer: {
     name: 'Hydraulic Fist', pt: 'Martelo Hidráulico', kind: 'slam', dmg: 34, cd: 1.15, radius: 36, knock: 200,
     price: 1350, lvl: 8, desc: 'Ground slam. Huge knockback, area damage.',
+  },
+  flamer: {
+    name: 'Flamethrower Arm', pt: 'Lança-Chamas', kind: 'flame', dmg: 3.2, cd: 0.08, range: 62, arc: 0.6, burn: 7, burnT: 2.5,
+    price: 1500, lvl: 9, desc: 'Sprays fire in a cone and sets targets ablaze. Ignites barrels.',
   },
   smg: {
     name: 'Smart SMG', pt: 'Metralhadora Smart', kind: 'ranged', dmg: 5, cd: 0.09, speed: 300, life: 0.75, spread: 0.12,
@@ -105,7 +125,7 @@ export const MODS = {
   },
   legs: {
     name: 'Leg Servos', pt: 'Pernas de Mola', prices: [250, 650, 1200, 2000, 3000],
-    desc: (l) => `+${l * 7}% speed. Unlocks DASH [Q]`,
+    desc: (l) => `+${l * 7}% speed. Unlocks DASH [Q / SPACE / SHIFT]`,
   },
   nanite: {
     name: 'Nanite Regen', pt: 'Nanorregeneração', prices: [300, 700, 1300, 2100, 3200],
@@ -136,15 +156,71 @@ export const xpForLevel = (lvl) => Math.round(40 * Math.pow(lvl, 1.65));
 export const MAX_LEVEL = 40;
 export const RESPAWN_TIME = 5;
 export const DEATH_CASH_LOSS = 0.25;
+export const FOLLOWER_MAX = 2;           // follower bots per player (from captured districts)
 
-// ------------------------------------------------------------------ gang vault upgrades
+// ------------------------------------------------------------------ vehicles
+// Flying vehicles fly over buildings. Charge drains while flying; empty = slow crawl on the ground.
+export const VEHICLES = {
+  moto: {
+    name: 'Flying Moto', pt: 'Moto Voadora', seats: 2, gunners: [1], hp: 180, speed: 178, crawl: 34, charge: 100,
+    drain: 0.8, r: 9, price: 1500, desc: '2 seats: a driver and a gunner behind.',
+  },
+  car: {
+    name: 'Flying Car', pt: 'Carro Voador', seats: 4, gunners: [1, 2, 3], hp: 380, speed: 150, crawl: 28, charge: 100,
+    drain: 0.65, r: 12, price: 3000, desc: '4 seats: a driver and 3 gunners.',
+  },
+};
+export const VEHICLE_IDS = Object.keys(VEHICLES);
+export const BATTERY_PRICE = 80;         // a battery cell bought at the QG
+export const BATTERY_CHARGE = 60;
+export const MAX_VEHICLES = 18;
+export const VEHICLE_RESPAWN = 150;      // seconds until a wreck is replaced somewhere in the city
+
+// ------------------------------------------------------------------ gang vault upgrades (whole gang)
 export const VAULT_UPGRADES = {
-  training: { name: 'Guard Training', desc: 'Compound guards get tougher and hit harder', prices: [800, 1800, 3500, 6000, 9000] },
+  training: { name: 'Guard Training', desc: 'Guards, crew and turrets get tougher and hit harder', prices: [800, 1800, 3500, 6000, 9000] },
   count: { name: 'More Recruits', desc: '+1 guard at every compound', prices: [1000, 2600, 5200] },
   income: { name: 'Business Network', desc: '+25% compound income', prices: [1200, 3000, 6500] },
+  bounty: { name: 'Bounty Board', desc: '+15% cash from kills', prices: [1200, 3000, 6000] },
+  market: { name: 'Black Market', desc: '-8% prices on arms, mods and battery cells', prices: [1500, 3500, 7000] },
+  intel: { name: 'Informants', desc: '+15s warning before raids', prices: [1000, 2500] },
+  rescue: { name: 'Rescue Squad', desc: '-1.5s respawn time', prices: [900, 2200] },
 };
 export const BASE_GUARDS = 2;
 export const COMPOUND_INCOME = 6;        // R$ per income tick (every 10 s) per compound, + tier
+
+// ------------------------------------------------------------------ compound (district) upgrades
+export const TURRETS = {
+  mg: { name: 'Machine Gun', pt: 'Metralhadora', price: 600, range: 135, cd: 0.16, dmg: 5, hp: 260, desc: 'Fast bullets. Good all-rounder.' },
+  rocket: { name: 'Rocket Pod', pt: 'Lança-Mísseis', price: 1200, range: 180, cd: 2.4, dmg: 42, aoe: 36, hp: 300, desc: 'Slow explosive rockets. Shreds groups.' },
+  tesla: { name: 'Tesla Coil', pt: 'Bobina Tesla', price: 1000, range: 80, cd: 1.0, dmg: 20, chain: 3, hp: 280, desc: 'Zaps up to 3 targets close by.' },
+  flamer: { name: 'Flame Turret', pt: 'Torre de Fogo', price: 900, range: 62, cd: 0.12, dmg: 3.5, hp: 340, desc: 'Short range fire cone. Burns.' },
+  rail: { name: 'Rail Sentry', pt: 'Sentinela Trilho', price: 1800, range: 235, cd: 2.6, dmg: 75, hp: 240, desc: 'Long range piercing beam.' },
+};
+export const TURRET_IDS = Object.keys(TURRETS);
+export const TURRET_MAX_MK = 3;
+export const turretMult = (mk) => 1 + 0.4 * (mk - 1);
+export const turretUpgradePrice = (id, mk) => Math.round(TURRETS[id].price * 0.7 * mk);
+export const TURRET_REPAIR = 60;         // seconds for a destroyed turret to come back online
+
+export const COMPOUND_UPS = {
+  level: { name: 'Fortify', desc: '+1 turret slot (2 → 4)', prices: [1200, 3000] },
+  walls: { name: 'Armored Walls', desc: 'Raiders capture 25% slower per level; guards and turrets here take 12% less damage', prices: [700, 1600, 3200] },
+  barracks: { name: 'Barracks', desc: '+1 guard here per level', prices: [800, 2000] },
+  medic: { name: 'Medic Post', desc: 'Heals your players, guards and crew inside the compound', prices: [900] },
+  pad: { name: 'Charge Pad', desc: 'Recharges and repairs flying vehicles parked here', prices: [700] },
+  radar: { name: 'Radar Tower', desc: 'Shows hostiles in this district on your minimap; +15s raid warning here', prices: [600] },
+};
+export const COMPOUND_UP_IDS = Object.keys(COMPOUND_UPS);
+
+// ------------------------------------------------------------------ raids
+export const RAID_WARN = 30;
+export const RAID_INTERVAL = (owned) => Math.max(130, 260 - owned * 6);
+export const RAID_SIZE = (owned) => Math.min(18, 5 + Math.floor(owned * 0.8));
+
+// ------------------------------------------------------------------ PvP
+export const PVP_WIN_SHARE = 0.6;        // hold 60% of the city to win
+export const PVP_BASE_NAMES = ['QG da Laje', 'QG do Morro', 'QG da Orla', 'QG do Porto', 'QG do Viaduto', 'QG da Quebrada'];
 
 // ------------------------------------------------------------------ customization
 export const LOOK_OPTIONS = {
@@ -175,4 +251,41 @@ export const NAME_PARTS = {
 export const BIOME_LABEL = {
   base: 'Gang HQ', beach: 'Beach', favela: 'Favela', downtown: 'Downtown', suburb: 'Suburb',
   industrial: 'Docks', jungle: 'Jungle',
+};
+
+// ------------------------------------------------------------------ fake brands for neon signs, billboards and holograms
+// logo: a small pixel icon drawn in sprites.js. cat: which buildings use it.
+export const BRANDS = [
+  { name: 'ZAP COLA', c: '#ff3b5c', c2: '#ffffff', logo: 'bottle', cat: 'food' },
+  { name: 'GUARANA VOLT', c: '#3ddc84', c2: '#ff3b3b', logo: 'bolt', cat: 'food' },
+  { name: 'ACAI.EXE', c: '#b06bff', c2: '#ff7ad8', logo: 'bowl', cat: 'food' },
+  { name: 'NEOBRAS', c: '#3ad0ff', c2: '#ffffff', logo: 'tri', cat: 'corp' },
+  { name: 'CROMO BANK', c: '#ffd23f', c2: '#fff6c0', logo: 'coin', cat: 'corp' },
+  { name: 'BAILE 3000', c: '#ff3fa4', c2: '#ffd23f', logo: 'speaker', cat: 'night' },
+  { name: 'LAN HOUSE', c: '#22e5ff', c2: '#3ddc84', logo: 'monitor', cat: 'shop' },
+  { name: 'FARMACIA 24H', c: '#3ddc84', c2: '#ffffff', logo: 'cross', cat: 'shop' },
+  { name: 'MOTEL ORBITA', c: '#ff4fd8', c2: '#ffd23f', logo: 'heart', cat: 'night' },
+  { name: 'TATTOO', c: '#ff6a2b', c2: '#ffd23f', logo: 'star', cat: 'shop' },
+  { name: 'PASTEL++', c: '#ffd23f', c2: '#ff8a3d', logo: 'moon', cat: 'food' },
+  { name: 'SAMBA NET', c: '#ff8a3d', c2: '#22e5ff', logo: 'wifi', cat: 'corp' },
+  { name: 'CAFE MATRIX', c: '#ffb84a', c2: '#3ddc84', logo: 'cup', cat: 'food' },
+  { name: 'ROBO FIX', c: '#22e5ff', c2: '#ffd23f', logo: 'gear', cat: 'shop' },
+  { name: 'IMPLANTES', c: '#ff3fa4', c2: '#22e5ff', logo: 'eye', cat: 'shop' },
+  { name: 'BOTECO', c: '#ffd23f', c2: '#ffffff', logo: 'mug', cat: 'night' },
+  { name: 'TAXI AEREO', c: '#ffd23f', c2: '#22e5ff', logo: 'wing', cat: 'corp' },
+  { name: 'CHURRASCO', c: '#ff6a2b', c2: '#ffd23f', logo: 'flame', cat: 'food' },
+  { name: 'FUTEBOL+', c: '#3ddc84', c2: '#ffffff', logo: 'ball', cat: 'night' },
+  { name: 'HOTEL', c: '#a66bff', c2: '#ffffff', logo: 'star', cat: 'night' },
+  { name: 'DIESEL BR', c: '#ff8a3d', c2: '#ffffff', logo: 'drop', cat: 'ind' },
+  { name: 'CONTEINER SA', c: '#22e5ff', c2: '#ff8a3d', logo: 'box', cat: 'ind' },
+  { name: 'FERRO&CIA', c: '#ffd23f', c2: '#ff3b5c', logo: 'gear', cat: 'ind' },
+  { name: 'SORVETE', c: '#ff9ad8', c2: '#9af0ff', logo: 'cone', cat: 'food' },
+];
+
+// ------------------------------------------------------------------ breakable props (shoot them and they explode)
+export const BREAK_INFO = {
+  xbarrel: { hp: 20, r: 42, dmg: 60, kind: 'fire' },
+  gastank: { hp: 16, r: 46, dmg: 66, kind: 'fire' },
+  transformer: { hp: 40, r: 48, dmg: 44, kind: 'zap' },
+  car: { hp: 120, r: 52, dmg: 62, kind: 'fire' },
 };

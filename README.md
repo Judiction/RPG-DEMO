@@ -2,8 +2,8 @@
 
 **Guerra de território** — a real-time, top-down pixel-art RPG set in a Brazilian cyberpunk city.
 Favelas on the hills, neon downtown towers, docks, jungle parks and a Copacabana-style beach boardwalk.
-You and your friends are one gang. Start at your HQ, carve up the city district by district, and hold it
-against the Milícia, the NeoBrás corporate security and the Comando Cromo.
+Play **PvE** as one gang taking the city from the Milícia, the NeoBrás corporate security and the Comando Cromo,
+or **PvP** where every color is a rival gang.
 
 Runs in the browser. No install, no server: one player hosts and friends join with a 4-letter code.
 
@@ -12,69 +12,112 @@ Runs in the browser. No install, no server: one player hosts and friends join wi
 ## How to play
 
 ### Start a game
-1. Open the game page. Make your character (skin, hair, jacket...) and type your name.
-2. **HOST NEW GAME** creates a brand-new, randomly generated city and opens an online room.
+1. Open the game page. Make your character (skin, hair, jacket...), type your name and pick your **name color**
+   (it is your color on the map, on your name tag and on your waypoint).
+2. **NEW GAME** opens the setup screen:
+   - **Mode**: *PvE · Campaign* (everyone in one gang) or *PvP · Gang War* (players pick a gang color).
+   - **Map**: Coastal, Island, Lakes, River or Archipelago. A **live preview** of the city is shown on the right.
+   - **Size**: Small, Medium or Large.
+   - **Seed**: press **REROLL** for another city, or paste a seed code (like `CM-1A2B3C`) to replay a map you liked.
+   - **Save slot**: up to 5 saved games.
 3. Press **ESC → COPY INVITE LINK** (or the **COPY INVITE** button, bottom right) and send it to your friends.
    They can also type the 4-letter room code on the title screen and press **JOIN**.
 4. Up to **6 players**. Friends can drop in and out at any time.
 
-The host's browser runs the world, so **the host must keep the tab open**. The campaign autosaves in the
-host's browser. Next time, the host clicks **CONTINUE CAMPAIGN** and friends rejoin as their saved characters.
+The host's browser runs the world, so **the host must keep the tab open**. The game **autosaves every minute**
+(and after captures, lost districts and players leaving) in the host's browser — look for *SAVED ✓* at the bottom right.
+Next time, the host loads the game from the title screen and friends rejoin as their saved characters.
+
+**Closed the tab by accident?** Just join again with the same name: your level, cash, arms, mods and crew come back.
 
 ### Controls
 | Key | Action |
 | --- | --- |
-| **W A S D** / arrows | Move (8 directions) |
+| **W A S D** / arrows | Move (8 directions) / fly a vehicle |
 | **Mouse** | Aim |
 | **Left click** | Left-arm weapon |
 | **Right click** | Right-arm weapon |
-| **Q** (or Space) | Dash *(needs Leg Servos)* |
+| **Q** / Space / Shift | Dash in the direction you move, diagonals included *(needs Leg Servos)* |
 | **E** | Nano-Heal *(needs Nanite Regen)* |
 | **R** | Cloak: enemies lose you, next hit does 2× *(needs Optical Camo)* |
 | **F** | Kinetic Shield *(needs Kinetic Shield)* |
-| **B** | Base menu (only at your HQ, *QG da Laje*) |
-| **TAB** | Territory map |
+| **V** | Get in / out of a flying vehicle |
+| **B** | Base menu (at your QG) or compound upgrades (near the core of a district you own) |
+| **TAB** | Territory map: click to place your waypoint, click a district to see / upgrade it |
 | **Enter** | Chat |
-| **ESC** | Menu: invite link, volume, quit |
+| **ESC** | Menu: invite link, volume, save, quit |
 | **M** | Music on/off |
 
-### The game loop
+### The game loop (PvE)
 1. **Leave the QG** and go to a district that **borders your turf** (check the minimap or the TAB map).
-2. **Kill the garrison.** Each district has a garrison count (top-right panel). Enemies come from weak to strong:
-   districts farther from your HQ have bigger, nastier enemies.
+2. **Kill the garrison.** Each district has a garrison count (top-right panel). Districts farther from your HQ have
+   bigger, nastier enemies. Enemies close to you show up as red dots on the minimap.
 3. **Capture the core.** When the garrison hits 0, stand on the glowing antenna in the middle of the compound
    until the ring fills. Several players capture faster. Enemies near the core stop the capture.
-4. **The people join you.** A captured compound gets **guards** that defend it and pays **income** into the
-   **gang vault** every 10 seconds.
-5. **Defend.** The factions send **raids** at your border districts. You get a 30-second warning and red arrows
-   point to the target. If raiders hold the core with no defenders around, you lose the district.
-6. **Take the HQs.** Control half of a faction's districts to unlock its **HQ** (yellow square on the map).
+4. **The people join you.** A captured compound gets **guards** and pays **income** into the **gang vault**.
+   Everyone standing on the core also gets a **crew member**: a follower bot that fights at your side
+   (up to 2 per player, stronger from tougher districts). **If a crew member dies, it is gone for good.**
+5. **Fortify.** Press **B** near the core of a district you own (or click it on the TAB map) to spend the vault on
+   **turrets** and **upgrades** for that compound (see below).
+6. **Defend.** The factions send **raids** at your border districts. You get a 30-second warning and red arrows
+   point to the target. Raids are big and nasty — later ones bring a starred lieutenant. If raiders hold the core
+   with no defenders (players, guards or turrets) around, you lose the district.
+7. **Take the HQs.** Control half of a faction's districts to unlock its **HQ** (yellow square on the map).
    A boss waits there: **Coronel Caveira** (Milícia), **CEO Androide** (NeoBrás) or **Rei do Baile** (Comando Cromo).
-   Beat the boss, capture the HQ, and that faction is finished.
-7. **Win** by capturing all three HQs. You can keep playing afterwards, or start a new city.
+8. **Win** by capturing all three HQs. You can keep playing afterwards, or start a new city.
+
+### PvP · Gang War
+- When you join, you **pick a gang color**. Same color = same gang. A new color starts a new gang at its own base
+  (up to 4 gangs on small maps, 6 on medium and large).
+- Rival players, their guards, crews, turrets and vehicles are all enemies. Killing a rival pays a bounty.
+- The bot factions still hold the rest of the city and raid every gang (a bit weaker than in PvE).
+  Faction bosses guard their HQs from the start; taking an HQ pays the gang a big bonus.
+- To capture a rival's district, clear its defenders and hold the core (bases take longer).
+- **Lose your main base** and you respawn at your other compounds. **Lose all your turf** and your gang is out —
+  you can then **join another gang**.
+- **Win** by being the last gang standing, or by holding **60% of the city**.
 
 ### Money, levels and death
-- **Kills pay cash (R$)** to whoever got the kill. Teammates nearby get a 40% share, so supporting pays too.
+- **Kills pay cash (R$)** to whoever got the kill. Teammates nearby get a 40% share. Crew kills pay their owner half.
 - **XP** levels you up: more max HP and damage. Some weapons need a minimum level.
 - **Dying** sends you back to the QG after 5 seconds and drops **25% of your cash** where you fell.
-  A teammate can pick it up, or you can go back for it.
-- **The enemy that kills a player levels up**: it grows into the next, bigger tier and gets a ★.
-  Watch out for starred enemies.
+- **Enemies that kill anyone level up** (players, guards, crew, turrets): they grow into the next, bigger tier and get a ★.
 
-### The base (QG da Laje)
+### The base (QG)
 Walk into your HQ and press **B**:
 - **ARSENAL** buys new **cyber-arms** (weapons) and upgrades them up to Mk5.
 - **CLÍNICA** installs **body mods**. They change how your character looks and plays:
-  - *Subdermal Armor*: more HP, less damage taken
-  - *Leg Servos*: faster, unlocks **Dash**
-  - *Nanite Regen*: health regeneration, unlocks **Nano-Heal**
-  - *Optical Camo*: unlocks **Cloak**
-  - *Kinetic Shield*: unlocks **Shield**
-- **ARMÁRIO** (lockers) chooses which weapon goes on each arm. Both arms can carry the same weapon.
-- **COFRE** (vault) spends the gang vault on upgrades for everyone: tougher guards, more guards, more income.
-  Anyone can donate cash to it.
+  *Subdermal Armor* (HP, less damage), *Leg Servos* (speed, Dash), *Nanite Regen* (regen, Nano-Heal),
+  *Optical Camo* (Cloak), *Kinetic Shield* (Shield).
+- **ARMÁRIO** (lockers) chooses which weapon goes on each arm.
+- **GARAGEM** sells **battery cells** (your money) and **flying vehicles** for the gang (vault money).
+- **COFRE** (vault) spends the gang vault on upgrades for the whole gang:
+  Guard Training, More Recruits, Business Network (income), Bounty Board (+cash per kill),
+  Black Market (cheaper shops), Informants (earlier raid warnings), Rescue Squad (faster respawn).
+- **DEFESA** puts turrets and upgrades on the base itself.
 
-Standing in the QG also heals you quickly.
+### Compound upgrades (every district you own)
+| Upgrade | What it does |
+| --- | --- |
+| **Turret slots** | 2 slots, up to 4 with **Fortify**. Choose per slot: **Machine Gun**, **Rocket Pod**, **Tesla Coil** (chains 3 targets), **Flame Turret**, **Rail Sentry**. Upgrade each to Mk3. Destroyed turrets repair themselves after 60s. |
+| **Armored Walls** | Raiders capture slower; guards and turrets there take less damage |
+| **Barracks** | More guards in that district |
+| **Medic Post** | Heals your players, guards and crew inside the compound |
+| **Charge Pad** | Recharges and repairs flying vehicles parked there |
+| **Radar Tower** | Hostiles in that district appear on your minimap; earlier raid warning |
+
+Upgrades are lost if the district falls.
+
+### Flying vehicles
+Vehicles are parked around the city (they show on the minimap and map). Press **V** next to one.
+- **Moto Voadora**: 2 seats — a driver and a gunner behind.
+- **Carro Voador**: 4 seats — a driver and 3 gunners.
+- They **fly over buildings** and water. The driver can't shoot; gunners use their arms.
+- Flying uses **charge**. When it runs out the vehicle can only **crawl on the ground**: drive it back to the QG or a
+  compound with a **Charge Pad** to recharge (it takes a moment), or carry a **battery cell** and get in to give it
+  +60% charge on the spot.
+- Vehicles take damage instead of their riders, and repair while parked at the QG. If one is wrecked,
+  everyone falls off **unhurt**, and a new vehicle appears somewhere in the city a few minutes later.
 
 ### Weapons (arms)
 | Arm | Style |
@@ -85,19 +128,25 @@ Standing in the QG also heals you quickly.
 | Shotgun Arm | close-range spread |
 | Monowire | long razor wire that cuts through a line of enemies |
 | Hydraulic Fist | ground slam, area damage and big knockback |
+| Flamethrower Arm | short fire cone that sets targets ablaze |
 | Smart SMG | self-guiding bullets |
 | Rocket Arm | explosive rockets |
 | Rail Arm | instant piercing beam |
 
-Every player starts equal. Your path depends on which arms and mods you buy: a fast cloaked blade
-assassin, a tanky hammer brawler, a rocket and rail sniper...
+### The city
+- **Explosive props**: red barrels, gas cylinders (*botijões*), transformers and parked cars blow up when shot,
+  hurting whoever is close. Lure enemies next to them. They come back after a while.
+- Every new game builds a new city. The **music** is Brazilian funk made live in code, chiptune style:
+  every district has its own track, and the faction holding it picks the style — *Volt Mix* on your turf,
+  dark *bruxaria* in Milícia land, *funk melody* in NeoBrás districts and fast *funk 150* in Comando Cromo turf.
+  It gets heavier in fights and raids.
+- Night falls every few minutes. The neon signs, holograms and windows glow at night.
 
 ### Tips
 - Only districts touching your turf can be captured. Expand outward like a stain.
-- Ranged enemies keep their distance; melee ones rush you. Big ones telegraph slams with a red circle, so dodge out.
-- Spend the vault on **More Recruits** and **Guard Training** before you spread too thin. Guards hold the line while you're away.
-- Night falls every few minutes. The city looks best then.
-- Every new game builds a new city. The music is generated live too (ESC → **NEW MUSIC TRACK** for a different one).
+- Put waypoints on the map (**TAB**) to call your friends to a raid. Everyone in your gang sees them, in your color.
+- Spend the vault on turrets at your border districts before you spread too thin.
+- A gunner in a flying car with a Rail Arm or Rocket Arm is a great raid response team.
 
 ---
 
@@ -109,6 +158,8 @@ The game is plain static files (no build step), ready for GitHub Pages:
    pick `main` and `/ (root)`, then save.
 3. After a minute the game is live at `https://<your-user>.github.io/<repo-name>/`. Share that link.
    Invite links (`?room=CODE`) work on that address too.
+
+Everyone should reload the page after you publish an update (hosts and friends must run the same version).
 
 To test locally, serve the folder with any static server (opening `index.html` directly from disk won't load
 the JavaScript modules), for example:
@@ -123,27 +174,28 @@ Then open `http://localhost:8000`.
 - Some strict networks (corporate, some university Wi-Fi, some mobile hotspots) block direct WebRTC connections.
   If a friend can't connect, try another network.
 - If the online room can't be created, the host still plays solo offline.
+- Saves from the first version show up as save slot 1 and keep working.
 
 ## Project structure
 ```
 index.html        page shell (loads PeerJS + the game)
 style.css         UI styling
-js/main.js        app flow, hosting/joining, game loop, prediction, events → effects/sounds
-js/game.js        the simulation the host runs: combat, enemy AI, territory, raids, economy, saving
-js/world.js       procedural city generator + collision + pathfinding
-js/render.js      canvas renderer: tile chunks, sprites, neon lighting, effects
-js/sprites.js     all pixel art, drawn in code (characters, enemies, arms, buildings, tiles, props)
-js/ui.js          title screen, character creator, HUD, base menu, maps
-js/music.js       generative micro house (Web Audio, made entirely with code)
-js/audio.js       synthesized sound effects
+js/main.js        app flow, hosting/joining, save slots, game loop, prediction, vehicles, events → effects/sounds
+js/game.js        the simulation the host runs: combat, AI, gangs, territory, turrets, vehicles, raids, economy, saving
+js/world.js       procedural city generator (5 map types, bridges, props) + collision + pathfinding
+js/render.js      canvas renderer: tile chunks, sprites, neon lighting and glow, effects, waypoints
+js/sprites.js     all pixel art, drawn in code (characters, enemies, arms, vehicles, turrets, buildings, signs, props)
+js/ui.js          title screen, new-game setup + map preview, HUD, base and compound menus, maps, gang picker
+js/music.js       generative Brazilian funk (Web Audio, made entirely with code)
+js/audio.js       synthesized sound effects + vehicle engine
 js/net.js         PeerJS wrapper (rooms, codes, message chunking)
 js/input.js       keyboard + mouse
 js/font.js        tiny bitmap font for in-world text
-js/data.js        weapons, mods, enemies, factions, prices — tweak balance here
+js/data.js        weapons, mods, vehicles, turrets, upgrades, factions, brands, prices — tweak balance here
 js/rng.js         seeded random + noise
 ```
 
 ## Credits
-- All graphics, sound effects and music are generated in code. No external assets.
+- All graphics, sound effects and music are generated in code. No external assets. All brands are made up.
 - Fonts: [Silkscreen](https://fonts.google.com/specimen/Silkscreen) and [VT323](https://fonts.google.com/specimen/VT323) (Google Fonts, OFL).
 - Networking: [PeerJS](https://peerjs.com/) (MIT).
