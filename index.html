@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Neon Quebrada</title>
+  <meta name="description" content="Brazilian cyberpunk turf-war RPG. Host a room and take the city with your friends.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=VT323&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2312081f'/%3E%3Crect x='3' y='3' width='10' height='10' fill='%23ff3f8e'/%3E%3Crect x='5' y='5' width='6' height='6' fill='%2322e5ff'/%3E%3C/svg%3E">
+</head>
+<body>
+  <div id="screen">
+    <canvas id="game"></canvas>
+    <div id="crt"></div>
+    <div id="menus"></div>
+  </div>
+  <!-- PeerJS: browser-to-browser connections for online play -->
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
