@@ -424,24 +424,55 @@ export function generateWorld(seed, opts = {}) {
       C.stations = [{ kind: 'arsenal', x: l, y: t }, { kind: 'clinic', x: r, y: t }, { kind: 'locker', x: l, y: bo }, { kind: 'vault', x: r, y: bo }, { kind: 'garage', x: C.coreX, y: bo }];
       C.small = true;
       C.garage = { x: (C.coreX + 0.5) * TILE, y: (C.coreY + 2.5) * TILE };
+      C.boca = { x: (C.coreX + 2.5) * TILE, y: (C.coreY + 0.5) * TILE, stall: true, sx: (C.coreX + 2.5) * TILE, sy: (C.coreY - 0.5) * TILE + 6 };
     } else if (R.base) {
-      // the main base: real buildings for the shops, a garage yard and the flag in the middle
-      const bw = Math.max(3, Math.min(7, Math.floor(C.w * 0.23))), bh = Math.max(3, Math.min(5, Math.floor(C.h * 0.22)));
+      // the main base: an occupied favela block. Tall brick buildings for the shops, the garage, the boca, the flag in the middle
+      const bw = Math.max(3, Math.min(8, Math.round(C.w * 0.26))), bh = Math.max(3, Math.min(6, Math.round(C.h * 0.26)));
       const l = C.x + 2, r = C.x + C.w - 2 - bw, t = C.y + 2, bo = C.y + C.h - 2 - bh;
-      const kinds = [['arsenal', l, t, 3], ['clinic', r, t, 2], ['locker', l, bo, 2], ['vault', r, bo, 3]];
+      const kinds = [['arsenal', l, t, 5], ['clinic', r, t, 4], ['locker', l, bo, 4], ['vault', r, bo, 5]];
       C.stations = kinds.map(([kind, x, y, fl]) => {
         const b = addB(x, y, bw, bh, 'hq', { kind, hqFloors: fl, doorN: y > C.coreY });
         return { kind, x: x + (bw >> 1), y: y > C.coreY ? y - 1 : y + bh, b };
       });
-      const gy = Math.min(C.y + C.h - 3, C.coreY + 4);
-      C.garage = { x: (C.coreX + 0.5) * TILE, y: (gy + 0.5) * TILE };
-      C.stations.push({ kind: 'garage', x: C.coreX, y: gy });
+      const midX = C.x + (C.w >> 1);
+      if (C.w >= 23 && C.h >= 17) {
+        // garage: a wide building with a roll-up door, the parking bay in front of it
+        const gw = Math.max(4, Math.min(7, C.w - 2 * bw - 8)), gh = Math.max(3, Math.min(4, bh - 1));
+        const gx = C.coreX - (gw >> 1), gy = C.y + C.h - 2 - gh;
+        const gb = addB(gx, gy, gw, gh, 'garage', { kind: 'garage', doorN: true });
+        C.garageB = gb;
+        C.garage = { x: (C.coreX + 0.5) * TILE, y: (gy - 1.2) * TILE };
+        C.stations.push({ kind: 'garage', x: C.coreX, y: gy - 1, b: gb });
+        // the bottom wall opens on both sides of the garage (the middle gate would lead behind it)
+        const yb = C.y + C.h - 1;
+        for (let x = midX - 2; x <= midX + 2; x++) tiles[I(x, yb)] = T.WALL;
+        for (const [a0, a1] of [[l + bw, gx - 1], [gx + gw, r - 1]]) {
+          const c0 = Math.max(a0, ((a0 + a1) >> 1) - 1), c1 = Math.min(a1, c0 + 1);
+          for (let x = c0; x <= c1; x++) tiles[I(x, yb)] = T.CONCRETE;
+        }
+        // the boca de fumo, right by the top gate so customers walk in from the street
+        const room = r - midX;
+        if (room >= 5) {
+          const ww = room >= 6 ? 3 : 2;
+          const bb = addB(midX + 2, C.y + 2, ww, 3, 'boca', { kind: 'boca' });
+          C.boca = { x: (midX + 2 + ww / 2) * TILE, y: (C.y + 5.5) * TILE, b: bb };
+        }
+        C.paredao = { x: (midX - 3) * TILE, y: (C.y + 3) * TILE + 12 };
+      } else {
+        const gy = Math.min(C.y + C.h - 3, C.coreY + 4);
+        C.garage = { x: (C.coreX + 0.5) * TILE, y: (gy + 0.5) * TILE };
+        C.stations.push({ kind: 'garage', x: C.coreX, y: gy });
+      }
+      if (!C.boca) C.boca = { x: (C.x + 2.5) * TILE, y: (C.coreY + 0.5) * TILE, stall: true, sx: (C.x + 1.5) * TILE, sy: (C.coreY + 0.5) * TILE + 6 };
     } else if (C.w >= 13 && C.h >= 11) {
       // gang outpost: little favela shacks in the corners
       const sw = C.w >= 17 ? 4 : 3, sh = C.h >= 13 ? 3 : 2;
       const spots = [[C.x + 1, C.y + 1], [C.x + C.w - 1 - sw, C.y + 1], [C.x + 1, C.y + C.h - 1 - sh], [C.x + C.w - 1 - sw, C.y + C.h - 1 - sh]];
       C.shacks = [];
       spots.forEach(([x, y], k) => { if (hash2(x, y, seed ^ 0x5151) < 0.85 || k < 2) C.shacks.push(addB(x, y, sw, sh, 'shack', { doorN: y > C.coreY })); });
+      const bk = C.shacks[Math.floor(hash2(C.x, C.y, seed ^ 0xb0ca) * C.shacks.length)];
+      bk.style = 'boca'; bk.kind = 'boca';
+      C.boca = { x: (bk.x + bk.w / 2) * TILE, y: (bk.doorN ? bk.y - 0.5 : bk.y + bk.h + 0.5) * TILE, b: bk };
       // bunting (little flags in the owner's color) strung between the shacks
       C.bunting = [];
       const sh0 = C.shacks;
@@ -451,6 +482,8 @@ export function generateWorld(seed, opts = {}) {
         C.bunting.push({ x1: (A.x + A.w / 2) * TILE, y1: (A.y + A.h / 2) * TILE, x2: (B.x + B.w / 2) * TILE, y2: (B.y + B.h / 2) * TILE });
       }
     }
+    // tiny compounds: the boca is a street stall in a corner
+    if (!C.boca) C.boca = { x: (C.x + 2.5) * TILE, y: (C.y + 1.5) * TILE, stall: true, sx: (C.x + 1.5) * TILE, sy: (C.y + 1.5) * TILE + 6 };
     // turret slots around the core
     let dx = Math.max(1, Math.min(4, (C.w >> 1) - 2)), dy = Math.max(1, Math.min(3, (C.h >> 1) - 2));
     if (!R.base && C.w >= 13) { dx = 3; dy = 2; }
@@ -468,6 +501,39 @@ export function generateWorld(seed, opts = {}) {
     };
     run(true, C.y, C.x, C.x + C.w - 1); run(true, C.y + C.h - 1, C.x, C.x + C.w - 1);
     run(false, C.x, C.y + 1, C.y + C.h - 2); run(false, C.x + C.w - 1, C.y + 1, C.y + C.h - 2);
+  }
+
+  // ---------------------------------------------------------------- the favela town packed around the main bases
+  // (hash-placed, after every compound, so the random sequence of the old generator is untouched)
+  const townOk = (t) => t === T.GRASS || t === T.DIRT || t === T.CONCRETE || t === T.METAL;
+  for (const R of regions) {
+    if (!R.base || R.compound.small) continue;
+    const C = R.compound;
+    const gx = [C.coreX], gy = [C.coreY];
+    for (let x = C.x; x < C.x + C.w; x++) if (tiles[I(x, C.y + C.h - 1)] !== T.WALL) gx.push(x);
+    C.town = [];
+    for (let y = C.y - 9; y < C.y + C.h + 9; y++) for (let x = C.x - 10; x < C.x + C.w + 10; x++) {
+      if (hash2(x, y, seed ^ 0x70f1) > 0.55) continue;
+      const w = 2 + ((hash2(x, y, seed ^ 0x1111) * 3) | 0), h = 2 + ((hash2(y, x, seed ^ 0x1212) * 2) | 0);
+      if (x < 2 || y < 2 || x + w > W - 2 || y + h > H - 2) continue;
+      // keep the lanes in front of the gates open
+      let lane = false;
+      for (const g of gx) if (x <= g + 2 && x + w > g - 2 && (y + h <= C.y || y >= C.y + C.h)) lane = true;
+      for (const g of gy) if (y <= g + 2 && y + h > g - 2 && (x + w <= C.x || x >= C.x + C.w)) lane = true;
+      if (lane) continue;
+      let ok = true;
+      for (let yy = y - 1; yy < y + h + 1 && ok; yy++) for (let xx = x - 1; xx < x + w + 1 && ok; xx++) {
+        const i = I(xx, yy), t = tiles[i];
+        const foot = xx >= x && xx < x + w && yy >= y && yy < y + h;
+        if (foot) { if (region[i] !== R.id || !townOk(t) || reserved[i]) ok = false; }
+        else if (t === T.BUILD || t === T.WALL || t === T.WATER) ok = false;
+      }
+      if (!ok) continue;
+      for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) { tiles[I(xx, yy)] = T.BUILD; reserved[I(xx, yy)] = 1; }
+      const b = { x, y, w, h, style: 'brick', fr: 1, r: R.id, seed: Math.floor(hash2(x, y, seed ^ 0x7a7a) * 1e9), compound: R.id, town: true };
+      compoundBuildings.push(b);
+      C.town.push(b);
+    }
   }
 
   // ---------------------------------------------------------------- buildings
@@ -546,7 +612,7 @@ export function generateWorld(seed, opts = {}) {
   const world = {
     seed, type, size: sizeKey, W, H, tiles, region, regions, buildings, coast, baseId, bases, factionRegions, hqs,
     props: [], lights: [], propGrid: null, lightGrid: null, reach: null, spawnTiles: null, roadTiles: null, bars,
-    breakables: [], breakGrid: null, wires: [], wireGrid: null, smokers: [], holos: [],
+    breakables: [], breakGrid: null, wires: [], wireGrid: null, smokers: [], holos: [], hangouts: [],
   };
   const b0 = regions[baseId].compound;
   let reach = floodReach(world, b0.coreX, b0.coreY);
@@ -913,8 +979,61 @@ function buildProps(world) {
     const C = R.compound;
     props.push({ type: 'core', x: C.coreX * TILE + 8, y: C.coreY * TILE + 10, region: R.id });
     if (C.stations) for (const s of C.stations) {
-      if (C.small || s.kind === 'garage') props.push({ type: 'station', kind: s.kind, x: (C.small ? s.x : C.coreX - 4) * TILE + 8, y: s.y * TILE + 12 });
+      if (C.small || (s.kind === 'garage' && !s.b)) props.push({ type: 'station', kind: s.kind, x: (C.small ? s.x : C.coreX - 4) * TILE + 8, y: s.y * TILE + 12 });
       lights.push({ x: s.x * TILE + 8, y: s.y * TILE + 8, r: 70, c: STATION_COLORS[s.kind] });
+    }
+    const hang = (x, y, kind, k) => world.hangouts.push({ x, y, kind, region: R.id, seed: Math.floor(hash2(x | 0, y | 0, seed ^ 0x4a4a) * 1e5) + k });
+    // the boca de fumo: green neon, a stall for the small ones, a lookout leaning by the door
+    if (C.boca) {
+      if (C.boca.stall) props.push({ type: 'bocastall', x: C.boca.sx, y: C.boca.sy, v: 0 });
+      lights.push({ x: C.boca.x, y: C.boca.y - 6, r: 60, c: '#7dff5a', c2: '#ff3fa4', anim: 'swap', seed: R.id * 3 });
+      hang(C.boca.x + 14, C.boca.y + 2, 'lean', 0);
+    }
+    if (C.garageB) {
+      const gb = C.garageB;
+      lights.push({ x: (gb.x + gb.w / 2) * TILE, y: gb.y * TILE - 4, r: 80, c: '#ff8a3d', anim: 'pulse', seed: 5 });
+      for (const sx of [-1, 1]) props.push({ type: 'tires', x: (gb.x + gb.w / 2) * TILE + sx * (gb.w / 2 + 0.6) * TILE, y: (gb.y - 0.2) * TILE, v: sx > 0 ? 1 : 0 });
+    }
+    if (C.paredao) {
+      // the paredão: a wall of speakers, the gang hanging out around it
+      props.push({ type: 'paredao', x: C.paredao.x, y: C.paredao.y, v: 0 });
+      lights.push({ x: C.paredao.x, y: C.paredao.y - 10, r: 90, c: '#ff3fa4', c2: '#22e5ff', anim: 'strobe', seed: 2 });
+      for (let k = 0; k < 4; k++) hang(C.paredao.x - 14 + k * 9 + (k % 2) * 3, C.paredao.y + 14 + (k % 2) * 8, 'dance', k);
+      props.push({ type: 'chairs', x: C.paredao.x - 26, y: C.paredao.y + 6, v: 0 });
+      hang(C.paredao.x - 32, C.paredao.y + 8, 'sit', 7); hang(C.paredao.x - 20, C.paredao.y + 8, 'sit', 8);
+    }
+    if (R.base && !C.small) {
+      // barricades at the gates: tires and burning barrels, a lookout on each
+      const midX = C.x + (C.w >> 1), midY = C.y + (C.h >> 1);
+      const gates = [[midX, C.y - 1, 0], [C.x - 1, midY, 1], [C.x + C.w, midY, 1]];
+      for (let x = C.x + 1; x < C.x + C.w - 1; x++) if (tiles[I(x, C.y + C.h - 1)] !== T.WALL && tiles[I(x - 1, C.y + C.h - 1)] === T.WALL) gates.push([x + 0.5, C.y + C.h, 0]);
+      for (const [x, y, side] of gates) {
+        const ax = side ? 0 : 2.6, ay = side ? 2.6 : 0;
+        props.push({ type: 'tires', x: (x + 0.5 - ax) * TILE, y: (y + 0.5 - ay) * TILE + 6, v: 0 });
+        props.push({ type: 'barrel', x: (x + 0.5 + ax) * TILE, y: (y + 0.5 + ay) * TILE + 6, v: 0 });
+        lights.push({ x: (x + 0.5 + ax) * TILE, y: (y + 0.5 + ay) * TILE - 2, r: 46, c: '#ff8a3d', flicker: true });
+        hang((x + 0.5 - ax * 0.4) * TILE, (y + 0.5 - ay * 0.4) * TILE + 10, 'guard', 20);
+      }
+      // string lights across the yard, building to building
+      const st = C.stations.filter((q) => q.b && q.kind !== 'garage').map((q) => q.b);
+      C.bunting = C.bunting || [];
+      for (const [a, b2] of [[0, 1], [2, 3], [0, 2], [1, 3]]) if (st[a] && st[b2]) C.bunting.push({ x1: (st[a].x + st[a].w / 2) * TILE, y1: (st[a].y + st[a].h / 2) * TILE, x2: (st[b2].x + st[b2].w / 2) * TILE, y2: (st[b2].y + st[b2].h / 2) * TILE, lights: true });
+      // the town around: stalls, chairs, motorbikes, laundry lines between the houses
+      const town = C.town || [];
+      town.forEach((b, k) => {
+        const h = hash2(b.x, b.y, seed ^ 0x3c3c);
+        const fx = (b.x + b.w / 2) * TILE, fy = (b.y + b.h) * TILE + 7;
+        if (tiles[I(b.x + (b.w >> 1), b.y + b.h)] === T.BUILD || tiles[I(b.x + (b.w >> 1), b.y + b.h)] === T.WALL) return;
+        if (h < 0.18) props.push({ type: 'stall', x: fx, y: fy, v: k % 3 });
+        else if (h < 0.3) { props.push({ type: 'chairs', x: fx, y: fy, v: 1 }); hang(fx - 6, fy + 2, 'sit', k); }
+        else if (h < 0.4) props.push({ type: 'moto', x: fx + 6, y: fy, v: k % 4 });
+        else if (h < 0.5) props.push({ type: 'tires', x: fx, y: fy, v: k % 2 });
+        if (h > 0.55 && h < 0.85) lights.push({ x: fx, y: fy - 4, r: 34, c: ['#ffcf7a', '#ff3fa4', '#22e5ff', '#7dff5a'][k % 4] });
+        for (let j = k + 1; j < town.length; j++) {
+          const o = town[j], d = Math.hypot(o.x - b.x, o.y - b.y);
+          if (d > 2 && d < 6 && hash2(k, j, seed) < 0.35) { world.wires.push({ x1: fx, y1: (b.y + b.h / 2) * TILE - 18, x2: (o.x + o.w / 2) * TILE, y2: (o.y + o.h / 2) * TILE - 18, cl: (k + j) % 7 }); break; }
+        }
+      });
     }
     if (C.shacks) {
       // outpost decor: sandbags at the gates, crates, a fire barrel
@@ -923,6 +1042,9 @@ function buildProps(world) {
       props.push({ type: 'barrel', x: (C.x + 2) * TILE + 8, y: (midY + 2) * TILE + 12, v: 0 });
       lights.push({ x: (C.x + 2) * TILE + 8, y: (midY + 2) * TILE + 4, r: 44, c: '#ff8a3d', flicker: true });
       props.push({ type: 'crate', x: (C.x + C.w - 3) * TILE + 8, y: (midY - 2) * TILE + 12, v: 1 });
+      hang((C.x + 2) * TILE + 2, (midY + 3) * TILE + 6, 'sit', 1); hang((C.x + 3) * TILE + 10, (midY + 2) * TILE + 10, 'lean', 2);
+      props.push({ type: 'tires', x: (C.x + C.w - 3) * TILE + 8, y: (midY + 2) * TILE + 12, v: 1 });
+      if (C.shacks.length >= 2) { const a = C.shacks[0], b2 = C.shacks[1]; world.wires.push({ x1: (a.x + a.w) * TILE, y1: (a.y + 1) * TILE - 10, x2: b2.x * TILE, y2: (b2.y + 1) * TILE - 10, cl: R.id % 7 }); }
     }
     // bases are well lit: floodlights in the corners and over the core
     if (R.base) {
@@ -956,6 +1078,7 @@ function buildProps(world) {
   world.wireGrid = grid(world.wires, (o) => (o.x1 + o.x2) / 2, (o) => (o.y1 + o.y2) / 2);
   world.smokeGrid = grid(world.smokers);
   world.holoGrid = grid(world.holos);
+  world.hangGrid = grid(world.hangouts);
   world.gridW = cw; world.gridH = ch;
   world.bucket = bucket;
 }
@@ -975,6 +1098,9 @@ export function buildingFloors(b, r) {
     case 'factory': return 3;
     case 'kiosk': return 1;
     case 'hq': return b.hqFloors || 2;
+    case 'garage': return 2;
+    case 'boca': return 1 + (r < 0.4 ? 1 : 0);
+    case 'brick': return 1 + (r < 0.55 ? 1 : 0) + (r < 0.2 ? 1 : 0);
     case 'shack': return 1 + (r < 0.5 ? 1 : 0);
     case 'bar': return b.barFloors || 2;
     case 'ruin': return 1 + (r < 0.5 ? 1 : 0);
@@ -982,7 +1108,7 @@ export function buildingFloors(b, r) {
   }
 }
 
-export const STATION_COLORS = { arsenal: '#ff3f8e', clinic: '#3ddc84', locker: '#22e5ff', vault: '#ffd23f', garage: '#ff8a3d' };
+export const STATION_COLORS = { arsenal: '#ff3f8e', clinic: '#3ddc84', locker: '#22e5ff', vault: '#ffd23f', garage: '#ff8a3d', boca: '#7dff5a' };
 
 // ---------------------------------------------------------------- queries & collision
 export const tileAt = (world, tx, ty) => (tx < 0 || ty < 0 || tx >= world.W || ty >= world.H ? T.WATER : world.tiles[ty * world.W + tx]);

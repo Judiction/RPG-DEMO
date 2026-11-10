@@ -769,6 +769,67 @@ function paintProp(type, v, frame) {
     for (let r = 0; r < 2; r++) for (let i = 0; i < 4 - r; i++) { const x = 1 + i * 5 + r * 2, y = 6 - r * 4; P(x, y, 6, 4, '#a89870'); P(x, y, 6, 1, '#c8b890'); P(x, y + 3, 6, 1, '#7a6a4a'); }
     outline(c); c.ax = 11; c.ay = 11; return c;
   }
+  if (type === 'paredao') {
+    // a wall of speakers on a cart; frame 1 = the woofers pushed out on the beat
+    const o = pair(34, 34);
+    o.P(1, 30, 32, 3, '#2a2636'); o.P(3, 32, 4, 2, '#141018'); o.P(27, 32, 4, 2, '#141018');
+    o.P(1, 4, 32, 27, '#16121e'); o.P(1, 4, 32, 1, '#3a3446'); o.P(32, 4, 1, 27, '#0a0810');
+    for (const [cx, cy, r] of [[8, 11, 5], [25, 11, 5], [8, 24, 5], [25, 24, 5]]) {
+      o.P(cx - r, cy - r, r * 2, r * 2, '#241c30');
+      o.P(cx - r + 1, cy - r + 1, r * 2 - 2, r * 2 - 2, frame ? '#4a3e5c' : '#3a2e4a');
+      o.P(cx - 2, cy - 2, 4, 4, frame ? '#6a5a80' : '#1a1422');
+      o.E(cx - r, cy - r, r * 2, 1, frame ? '#22e5ff' : '#ff3fa4');
+    }
+    o.P(14, 6, 6, 22, '#201a2a'); for (let y = 8; y < 26; y += 3) o.P(15, y, 4, 1, '#3a3446');
+    for (let x = 2; x < 32; x += 3) o.E(x, 2, 2, 2, ['#ff3fa4', '#22e5ff', '#ffd23f', '#3ddc84'][(x / 3 + frame) % 4 | 0]);
+    o.E(14, 29, 6, 1, '#3ddc84');
+    return finish(o, 17, 33);
+  }
+  if (type === 'chairs') {
+    // plastic bar table with chairs (and a couple of bottles)
+    c = mk(22, 14); g = c.getContext('2d');
+    const col = v ? '#e8e4d8' : '#d01e2e';
+    P(7, 4, 9, 6, col); P(7, 4, 9, 1, '#ffffff'); P(8, 10, 1, 3, shade(col, -0.3)); P(14, 10, 1, 3, shade(col, -0.3));
+    P(9, 2, 2, 3, '#3a7a3a'); P(12, 2, 2, 3, '#8a5a1a');
+    for (const cx of [1, 18]) { P(cx, 6, 4, 4, col); P(cx, 3, 4, 3, shade(col, -0.1)); P(cx, 10, 1, 3, shade(col, -0.35)); P(cx + 3, 10, 1, 3, shade(col, -0.35)); }
+    outline(c); c.ax = 11; c.ay = 13; return c;
+  }
+  if (type === 'tires') {
+    // stacked tires (barricade)
+    c = mk(16, 14); g = c.getContext('2d');
+    for (let r = 0; r < 3; r++) { const y = 9 - r * 4, x = 1 + (r % 2) + (v && r === 2 ? 2 : 0); P(x, y, 13, 4, '#1a1a1e'); P(x + 1, y, 11, 1, '#3a3a42'); P(x + 4, y + 1, 5, 2, '#0a0a0e'); }
+    if (v) { P(10, 1, 4, 3, '#ffd23f'); P(11, 2, 2, 1, '#1a1a1e'); }
+    outline(c); c.ax = 8; c.ay = 13; return c;
+  }
+  if (type === 'stall') {
+    // street stall (barraca) with a striped awning: food, phones, or fruit
+    const o = pair(26, 26);
+    const aw = ['#d01e2e', '#2a7ad8', '#3a9a3a'][v % 3];
+    o.P(3, 12, 20, 11, '#6a4a2a'); o.P(3, 12, 20, 2, '#8a6a3a'); o.P(4, 23, 2, 3, '#3a2a1a'); o.P(20, 23, 2, 3, '#3a2a1a');
+    for (let x = 1; x < 25; x += 4) { o.P(x, 4, 2, 6, aw); o.P(x + 2, 4, 2, 6, '#f2f2f2'); }
+    o.P(1, 10, 24, 1, 'rgba(0,0,0,0.35)'); o.P(2, 5, 1, 18, '#56606e'); o.P(23, 5, 1, 18, '#56606e');
+    const goods = [['#ffd23f', '#ff8a3d', '#d01e2e'], ['#22e5ff', '#3a3a46', '#f2f2f2'], ['#3ddc84', '#ffd23f', '#ff3fa4']][v % 3];
+    for (let i = 0; i < 6; i++) o.P(5 + i * 3, 13 + (i % 2), 2, 2, goods[i % 3]);
+    o.E(5, 3, 16, 1, '#ffd88a');
+    return finish(o, 13, 25);
+  }
+  if (type === 'moto') {
+    // parked moto (mototáxi)
+    c = mk(18, 12); g = c.getContext('2d');
+    const col = ['#d01e2e', '#2a7ad8', '#1a1a22', '#ffd23f'][v % 4];
+    P(1, 7, 5, 5, '#141018'); P(12, 7, 5, 5, '#141018'); P(2, 8, 3, 3, '#5a5a66'); P(13, 8, 3, 3, '#5a5a66');
+    P(4, 5, 10, 3, col); P(6, 3, 5, 2, '#1a1a22'); P(13, 2, 2, 4, '#8a8a96'); P(12, 1, 4, 1, '#c8c8d0');
+    outline(c); c.ax = 9; c.ay = 11; return c;
+  }
+  if (type === 'bocastall') {
+    // street boca: a crate counter under a tarp with a green neon light
+    const o = pair(22, 24);
+    o.P(2, 13, 18, 9, '#5a3a2a'); o.P(2, 13, 18, 1, '#7a5a3a'); for (let x = 3; x < 20; x += 4) o.P(x, 14, 1, 8, '#3a2418');
+    o.P(1, 4, 20, 5, '#2a5a2a'); o.P(1, 4, 20, 1, '#3a7a3a'); o.P(2, 9, 1, 13, '#56606e'); o.P(19, 9, 1, 13, '#56606e');
+    o.E(5, 9, 12, 1, '#7dff5a'); o.E(9, 15, 4, 2, '#7dff5a');
+    o.P(4, 11, 2, 2, '#f2f2f2'); o.P(15, 11, 3, 2, '#ff3fa4');
+    return finish(o, 11, 23);
+  }
   if (type === 'flood') {
     // base floodlight tower
     const o = pair(14, 44);

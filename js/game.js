@@ -12,6 +12,7 @@ import {
   BATTERY_PRICE, BATTERY_CHARGE, MAX_VEHICLES, VEHICLE_RESPAWN, TURRETS, TURRET_IDS, TURRET_MAX_MK, turretMult,
   turretUpgradePrice, TURRET_REPAIR, COMPOUND_UPS, RAID_WARN, RAID_INTERVAL, RAID_SIZE, PVP_WIN_SHARE, BREAK_INFO,
   MAP_SIZES, RECOIL, EXPLOSION_PUSH, CIV, ITEMS, STIMS, BELT_SIZE, BAD_BATCH, WANTED, POLICE_WAVES, BAR_ROOM,
+  BOCA, CREW_LVL, isMech,
 } from './data.js';
 import { moveBox, lineOfSight, rayCast, bfsField, fieldDir, regionAt, opaqueAt, nearestOpen, boxHits } from './world.js';
 
@@ -29,7 +30,7 @@ const dist2 = (ax, ay, bx, by) => (ax - bx) ** 2 + (ay - by) ** 2;
 const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return Math.abs(d); };
 const pick = (arr) => arr[(rand() * arr.length) | 0];
 const gauss = () => (rand() + rand() + rand() - 1.5) / 0.5;
-const freshUps = () => ({ level: 0, walls: 0, barracks: 0, medic: 0, pad: 0, radar: 0 });
+const freshUps = () => ({ level: 0, walls: 0, barracks: 0, medic: 0, pad: 0, radar: 0, boca: 0 });
 const freshGangUps = () => { const u = {}; for (const k in VAULT_UPGRADES) u[k] = 0; return u; };
 
 // ------------------------------------------------------------------ creation / saving
@@ -169,7 +170,7 @@ export function serialize(game) {
 }
 
 function charData(game, p) {
-  const followers = [...game.allies.values()].filter((a) => a.follow === p.id).map((a) => ({ tier: a.tier, hpf: +(a.hp / a.maxHp).toFixed(2), civ: a.civ || 0, melee: a.melee }));
+  const followers = [...game.allies.values()].filter((a) => a.follow === p.id).map((a) => ({ tier: a.tier, hpf: +(a.hp / a.maxHp).toFixed(2), civ: a.civ || 0, melee: a.melee, lvl: a.lvl || 1, kills: a.kills || 0 }));
   return {
     name: p.name, look: p.look, color: p.color, gang: gangIdx(p.gang), level: p.level, xp: p.xp, cash: Math.floor(p.cash),
     armory: p.armory, equip: p.equip, mods: p.mods, kills: p.kills, deaths: p.deaths, pvpKills: p.pvpKills,
@@ -261,7 +262,7 @@ export function addPlayer(game, o) {
   p.x = sp.x + (rand() - 0.5) * 30; p.y = sp.y + 2 * TILE;
   game.players.set(p.id, p);
   if (saved && saved.followers) for (const f of saved.followers.slice(0, FOLLOWER_MAX)) {
-    const al = spawnFollower(game, p, f.tier || 1, { civ: f.civ, melee: f.melee });
+    const al = spawnFollower(game, p, f.tier || 1, { civ: f.civ, melee: f.melee, lvl: f.lvl, kills: f.kills });
     al.hp = Math.max(1, al.maxHp * (f.hpf ?? 1));
   }
   game.rosterVer++;
@@ -707,6 +708,7 @@ function applyAllyStats(game, al) {
   if (al.civ) { al.maxHp = 140 + 35 * L; al.dmg = (al.melee ? 17 : 9) + 4 * L; }
   else if (al.follow) { al.maxHp = 90 + 25 * al.tier + 30 * L; al.dmg = 7 + 2.5 * al.tier + 4 * L; }
   else { al.maxHp = 80 + 55 * L; al.dmg = 7 + 5 * L; }
+  if (al.follow && al.lvl > 1) { al.maxHp = Math.round(al.maxHp * (1 + CREW_LVL.hp * (al.lvl - 1))); al.dmg *= 1 + CREW_LVL.dmg * (al.lvl - 1); }
   al.hp = al.maxHp * frac;
 }
 
@@ -732,7 +734,7 @@ function spawnFollower(game, p, tier, extra = {}) {
     id: game.nextId++, k: 'a', region: -1, team: p.gang, x: p.x + (rand() - 0.5) * 16, y: p.y + (rand() - 0.5) * 16, px: p.x, py: p.y,
     hp: 1, maxHp: 1, dmg: 7, speed: 70, r: 4.5, target: null, atkCd: rand(), thinkT: rand() * 0.3, aim: rand() * 6.28, flash: 0,
     mvx: 0, mvy: 0, moving: false, follow: p.id, tier: Math.max(1, Math.min(6, tier)), hidden: !!p.veh, kx: 0, ky: 0, svx: 0, svy: 0,
-    civ: extra.civ || 0, melee: !!extra.melee,
+    civ: extra.civ || 0, melee: !!extra.melee, lvl: Math.max(1, Math.min(5, extra.lvl || 1)), kills: extra.kills || 0,
   };
   if (extra.x !== undefined) { al.x = extra.x; al.y = extra.y; }
   const o = nearestOpen(game.world, al.x, al.y, 4); al.x = o.x; al.y = o.y;
@@ -778,6 +780,13 @@ function spawnVehicleAtBase(game, gang, type, region) {
   for (let a = 0; a < 8; a++) {
     const tx = gx + (a % 3) * 22, ty = gy + (Math.floor(a / 3) - 1) * 18;
     if ([...game.vehicles.values()].every((v) => dist2(v.x, v.y, tx, ty) > 18 * 18)) { x = tx; y = ty; break; }
+  }
+  if (C.garageB) {
+    // roll out through the door, then park in the bay
+    const b = C.garageB, slot = [...game.vehicles.values()].filter((o) => o.team === gang.id && dist2(o.x, o.y, gx, gy) < (3 * TILE) ** 2).length;
+    const v = spawnVehicle(game, type, (b.x + b.w / 2) * TILE, (b.y + 0.4) * TILE);
+    if (v) { v.team = gang.id; v.roll = { x: gx + ((slot % 3) - 1) * 22, y: gy - Math.floor(slot / 3) * 18, t: 1.6 }; v.dir = 0; v.lastMove = game.time; emit(game, { t: 'vroll', x: v.x, y: v.y }); }
+    return v;
   }
   const v = spawnVehicle(game, type, x, y);
   if (v) v.team = gang.id;
@@ -875,13 +884,21 @@ function updateVehicle(game, v, dt) {
     emit(game, { t: 'vland', id: v.id, x: v.x, y: v.y });
     for (const pid of v.seats) if (pid) tell(game, pid, 'Out of charge! Crawl back to the QG, find a Charge Pad, or bring a battery cell.');
   } else if (!v.flying && v.charge > 1) v.flying = true;
-  // recharge + repair: parked at your gang's base or at a compound with a charge pad
+  if (v.roll) {
+    const dx = v.roll.x - v.x, dy = v.roll.y - v.y, d = Math.hypot(dx, dy), sp = 30 * dt;
+    v.roll.t -= dt;
+    if (d <= sp || v.roll.t <= 0 || v.seats.some(Boolean)) { if (!v.seats.some(Boolean)) { v.x = v.roll.x; v.y = v.roll.y; } v.roll = null; }
+    else { v.x += dx / d * sp; v.y += dy / d * sp; v.lastMove = game.time; }
+  }
+  // recharge + repair: parked at your gang's base or at a compound with a charge pad (fastest in the garage bay)
   if (game.time - v.lastMove > 0.6 && v.team) {
     const r = regionAt(game.world, v.x, v.y);
     if (r >= 0 && game.rs[r].owner === v.team && (game.world.regions[r].base || game.rs[r].up.pad)) {
       if (v.charge < V.charge || v.hp < v.maxHp) {
-        v.charge = Math.min(V.charge, v.charge + 9 * dt);
-        v.hp = Math.min(v.maxHp, v.hp + 22 * dt);
+        const C = game.world.regions[r].compound;
+        const bay = C.garageB && dist2(v.x, v.y, C.garage.x, C.garage.y) < (3.5 * TILE) ** 2 ? 2.5 : 1;
+        v.charge = Math.min(V.charge, v.charge + 9 * bay * dt);
+        v.hp = Math.min(v.maxHp, v.hp + 22 * bay * dt);
         v.charging = true;
       } else v.charging = false;
     } else v.charging = false;
@@ -1015,12 +1032,27 @@ function damageEnemy(game, e, dmg, src, kx = 0, ky = 0, quiet = false) {
   e.flash = 0.12;
   if (src && src.k === 'p') { const pl = game.players.get(src.id); if (pl && buff(pl, 'knock', 0)) { kx *= 2.2; ky *= 2.2; } }
   if (kx || ky) { const m = e.boss ? 0.15 : 1 / e.bulk; e.kx += kx * m; e.ky += ky * m; }
-  if (!quiet) emit(game, { t: 'dmg', x: e.x, y: e.y - 14 * e.bulk - 6, v: Math.round(dmg), c: crit ? 'crit' : 'hit' });
+  if (!quiet) emit(game, { t: 'dmg', x: e.x, y: e.y - 14 * e.bulk - 6, v: Math.round(dmg), c: crit ? 'crit' : 'hit', fy: Math.round(e.y), d: kx || ky ? +Math.atan2(ky, kx).toFixed(2) : undefined, m: isMech(e.faction, e.tier, e.boss) ? 1 : 0 });
   if (src && (src.k === 'p' || src.k === 'a' || src.k === 't') && (!e.target || e.state === 'idle') && e.state !== 'return') {
     e.target = { k: src.k, id: src.id };
     if (e.state === 'idle') e.state = 'chase';
   }
   if (e.hp <= 0) killEnemy(game, e, src);
+}
+
+// crew members level up with their kills: tougher, harder hitting, faster (up to level 5)
+function crewKill(game, al) {
+  if (!al || !al.follow) return;
+  al.kills = (al.kills || 0) + 1;
+  const L = al.lvl || 1;
+  if (L < 5 && al.kills >= CREW_LVL.kills[L]) {
+    al.lvl = L + 1;
+    applyAllyStats(game, al);
+    al.hp = al.maxHp;
+    emit(game, { t: 'flvl', id: al.follow, lvl: al.lvl, x: al.x, y: al.y });
+    const owner = game.players.get(al.follow);
+    if (owner) owner.dirty = true;
+  }
 }
 
 function killEnemy(game, e, src) {
@@ -1034,6 +1066,7 @@ function killEnemy(game, e, src) {
   const gang = src && src.team ? game.gangs.get(src.team) : null;
   if (gang) cash *= 1 + 0.15 * (gang.upgrades.bounty || 0);
   let killer = src && src.k === 'p' ? game.players.get(src.id) : null;
+  if (src && src.k === 'a') crewKill(game, game.allies.get(src.id));
   if (!killer && src && src.k === 'a') { const al = game.allies.get(src.id); if (al && al.follow) killer = game.players.get(al.follow); if (killer) { addCash(game, killer, cash * 0.5, e.x, e.y - 10); addXp(game, killer, xp * 0.5); killer = null; } else if (gang) gang.vault += cash * 0.5; }
   else if (!killer && gang) gang.vault += cash * 0.5;
   if (killer) {
@@ -1089,7 +1122,7 @@ function hurtPlayer(game, p, dmg, src, kx = 0, ky = 0) {
   if (dmg <= 0) return;
   p.hp -= dmg;
   p.lastHurt = game.time;
-  emit(game, { t: 'dmg', x: p.x, y: p.y - 22, v: Math.round(dmg), c: 'player' });
+  emit(game, { t: 'dmg', x: p.x, y: p.y - 22, v: Math.round(dmg), c: 'player', fy: Math.round(p.y), d: kx || ky ? +Math.atan2(ky, kx).toFixed(2) : undefined });
   emit(game, { t: 'hurt', id: p.id });
   if (p.hp <= 0 && buff(p, 'cheat', 0)) {
     for (const id in p.buffs) if (p.buffs[id].eff.cheat) delete p.buffs[id];
@@ -1128,7 +1161,7 @@ function hurtAlly(game, al, dmg, src, kx = 0, ky = 0) {
   if (al.region >= 0 && game.rs[al.region]) dmg *= 1 - 0.12 * (game.rs[al.region].up.walls || 0);
   al.hp -= dmg;
   al.flash = 0.12;
-  emit(game, { t: 'dmg', x: al.x, y: al.y - 20, v: Math.round(dmg), c: 'ally' });
+  emit(game, { t: 'dmg', x: al.x, y: al.y - 20, v: Math.round(dmg), c: 'ally', fy: Math.round(al.y), d: kx || ky ? +Math.atan2(ky, kx).toFixed(2) : undefined });
   if (al.hp <= 0) {
     game.allies.delete(al.id);
     if (al.follow) {
@@ -1299,8 +1332,56 @@ export function step(game, dt) {
   updateRaids(game, dt);
   game.incomeT += dt;
   if (game.incomeT >= 10) { game.incomeT = 0; payIncome(game); }
+  updateBocas(game, dt);
   for (const q of game.vehQueue) q.t -= dt;
   while (game.vehQueue.length && game.vehQueue[0].t <= 0) { const q = game.vehQueue.shift(); if (game.vehicles.size < MAX_VEHICLES) { spawnVehicle(game, q.type); emit(game, { t: 'msg', text: `A new ${VEHICLES[q.type].name} is parked somewhere in the city.`, c: 'info' }); } }
+}
+
+function updateBocas(game, dt) {
+  const W = game.world;
+  game.bocaT = game.bocaT || {};
+  for (let i = 0; i < game.rs.length; i++) {
+    const rs = game.rs[i];
+    const B = W.regions[i].compound.boca;
+    if (!B || !isGang(rs.owner) || rs.capture > 0) continue;
+    const gang = game.gangs.get(rs.owner);
+    if (!gang || gang.out) continue;
+    const L = Math.min(3, rs.up.boca || 0);
+    const rep = repOf(game, rs.owner, i);
+    game.bocaT[i] = (game.bocaT[i] ?? BOCA.interval[L] * rand()) - dt * (0.5 + rep / 100);
+    if (game.bocaT[i] > 0) continue;
+    game.bocaT[i] = BOCA.interval[L] * (0.7 + rand() * 0.6);
+    // somebody is watching: a real customer walks in. Nobody near: the sale just happens.
+    let seen = false;
+    for (const p of game.players.values()) if (!p.out && dist2(p.x, p.y, B.x, B.y) < (30 * TILE) ** 2) { seen = true; break; }
+    if (!seen) { bocaSale(game, i, gang, L, false); continue; }
+    let walking = 0;
+    for (const c of game.civs.values()) if (c.buyer === i) walking++;
+    if (walking >= BOCA.maxWalking) { bocaSale(game, i, gang, L, false); continue; }
+    const f = bocaField(game, i);
+    for (let tries = 0; tries < 12; tries++) {
+      const a = rand() * 6.28, d = (11 + rand() * 9) * TILE;
+      const tx = Math.floor((B.x + Math.cos(a) * d) / TILE), ty = Math.floor((B.y + Math.sin(a) * d) / TILE);
+      if (tx < 1 || ty < 1 || tx >= W.W - 1 || ty >= W.H - 1 || !CIV_GROUND.has(W.tiles[ty * W.W + tx])) continue;
+      const x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
+      if (!fieldDir(W, f, x, y)) continue;
+      const c = spawnCiv(game, x, y);
+      c.buyer = i; c.buyT = 0;
+      break;
+    }
+  }
+}
+function bocaField(game, i) {
+  game.bocaFields = game.bocaFields || {};
+  if (!game.bocaFields[i]) { const B = game.world.regions[i].compound.boca; game.bocaFields[i] = bfsField(game.world, Math.floor(B.x / TILE), Math.floor(B.y / TILE), 26); }
+  return game.bocaFields[i];
+}
+function bocaSale(game, i, gang, L, shown, x, y) {
+  const [a, b] = BOCA.spend[L];
+  const v = Math.round((a + rand() * (b - a)) * (1 + 0.25 * (gang.upgrades.income || 0)));
+  gang.vault += v;
+  gang.bocaTotal = (gang.bocaTotal || 0) + v;
+  if (shown) emit(game, { t: 'sale', x, y, v, g: gang.id });
 }
 
 function payIncome(game) {
@@ -1618,13 +1699,13 @@ function updateAlly(game, al, dt) {
       if (al.melee) {
         if (d > 12) { mx = (tgt.x - al.x) / d; my = (tgt.y - al.y) / d; }
         if (d < 18 + radiusOf(tgt) && al.atkCd <= 0) {
-          al.atkCd = 0.65 + rand() * 0.2;
+          al.atkCd = (0.65 + rand() * 0.2) * (1 - CREW_LVL.rate * ((al.lvl || 1) - 1));
           emit(game, { t: 'swing', o: 'a' + al.id, s: 'R', a: +al.aim.toFixed(2), k: 'claw' });
           damage(game, tgt, al.dmg, { k: 'a', id: al.id, team: al.team }, Math.cos(al.aim) * 90, Math.sin(al.aim) * 90);
         }
       } else if (d > 90 || !los) { mx = (tgt.x - al.x) / d; my = (tgt.y - al.y) / d; }
       if (!al.melee && los && al.atkCd <= 0 && d < 150) {
-        al.atkCd = (al.civ ? 0.45 : al.follow ? 0.7 : 0.9) + rand() * (al.civ ? 0.25 : 0.4);
+        al.atkCd = ((al.civ ? 0.45 : al.follow ? 0.7 : 0.9) + rand() * (al.civ ? 0.25 : 0.4)) * (1 - CREW_LVL.rate * ((al.lvl || 1) - 1));
         spawnProj(game, { x: al.x + Math.cos(al.aim) * 6, y: al.y - 8, a: al.aim + (rand() - 0.5) * 0.1, speed: 260, life: 0.7, dmg: al.dmg, team: al.team, kind: al.follow ? 'smart' : 'pulse', src: { k: 'a', id: al.id, team: al.team } });
       }
       if (dist2(al.x, al.y, hx, hy) > leash * leash) { mx = (hx - al.x); my = (hy - al.y); const l = Math.hypot(mx, my) || 1; mx /= l; my /= l; al.target = null; }
@@ -2141,7 +2222,27 @@ function updateCivs(game, dt) {
       if (dist2(c.x, c.y, d.x, d.y) < (9 * TILE * d.w) ** 2) { c.flee = 3 + rand() * 2.5; c.fx = d.x; c.fy = d.y; break; }
     }
     let mx = 0, my = 0, sp = CIV.speed;
-    if (c.flee > 0) {
+    if (c.buyer !== undefined && c.flee <= 0) {
+      const rs = game.rs[c.buyer];
+      const B = world.regions[c.buyer].compound.boca;
+      if (!isGang(rs.owner)) c.buyer = undefined;
+      else if (dist2(c.x, c.y, B.x, B.y) < 11 * 11) {
+        c.buyT += dt; c.aim = Math.atan2(B.y - c.y - 8, B.x - c.x);
+        if (c.buyT > 1.6) {
+          const gang = game.gangs.get(rs.owner);
+          if (gang) bocaSale(game, c.buyer, gang, Math.min(3, rs.up.boca || 0), true, B.x, B.y - 18);
+          c.buyer = undefined; c.leaveT = 30; c.wanderT = 0;
+        }
+        c.moving = false;
+        continue;
+      } else {
+        const dir = fieldDir(world, bocaField(game, c.buyer), c.x, c.y);
+        if (dir) { const l = Math.hypot(dir.x, dir.y) || 1; mx = dir.x / l; my = dir.y / l; } else c.buyer = undefined;
+      }
+    }
+    if (c.leaveT > 0) { c.leaveT -= dt; if (c.leaveT <= 0) { let seen = false; for (const p of game.players.values()) if (dist2(p.x, p.y, c.x, c.y) < (16 * TILE) ** 2) seen = true; if (!seen) { game.civs.delete(c.id); continue; } c.leaveT = 5; } }
+    if (c.buyer !== undefined && c.flee <= 0) { /* walking to the boca */ }
+    else if (c.flee > 0) {
       c.flee -= dt;
       const dx = c.x - c.fx, dy = c.y - c.fy, l = Math.hypot(dx, dy) || 1;
       mx = dx / l; my = dy / l; sp = CIV.fleeSpeed;
@@ -2174,7 +2275,7 @@ function hurtCiv(game, c, dmg, src, kx = 0, ky = 0) {
   c.flash = 0.12;
   c.flee = 4; c.fx = c.x - (kx || 1); c.fy = c.y - (ky || 0);
   if (kx || ky) { c.kx += kx; c.ky += ky; }
-  emit(game, { t: 'dmg', x: c.x, y: c.y - 20, v: Math.round(dmg), c: 'civ' });
+  emit(game, { t: 'dmg', x: c.x, y: c.y - 20, v: Math.round(dmg), c: 'civ', fy: Math.round(c.y), d: kx || ky ? +Math.atan2(ky, kx).toFixed(2) : undefined });
   const team = src && src.team;
   const r = regionAt(game.world, c.x, c.y);
   if (c.hp <= 0) {
@@ -2418,7 +2519,7 @@ export function regionState(game) {
     mode: game.mode,
     rs: game.rs.map((r) => {
       const row = [ownerCode(r.owner), r.garrison, r.garrisonMax, Math.round(r.capture * 100), r.guards, (r.hqUnlocked ? 1 : 0) | (r.bossDefeated ? 2 : 0), r.capBy === 'raid' ? 99 : r.capBy ? ownerCode(r.capBy) : -1];
-      if (isGang(r.owner)) row.push([r.up.level, r.up.walls, r.up.barracks, r.up.medic, r.up.pad, r.up.radar], r.slots.map((s) => (s ? [TURRET_IDS.indexOf(s.type), s.mk] : 0)));
+      if (isGang(r.owner)) row.push([r.up.level, r.up.walls, r.up.barracks, r.up.medic, r.up.pad, r.up.radar, r.up.boca || 0], r.slots.map((s) => (s ? [TURRET_IDS.indexOf(s.type), s.mk] : 0)));
       return row;
     }),
     raids: game.raids.map((r) => [r.target, r.f, r.state === 'warn' ? 0 : 1, Math.max(0, Math.round(r.t)), gangIdx(r.gang), r.size]),
@@ -2481,7 +2582,7 @@ export function buildSnapshot(game, pid) {
   const A = [];
   for (const al of game.allies.values()) {
     if (al.hidden || !near(al.x, al.y)) continue;
-    A.push([al.id, r1(al.x), r1(al.y), Math.ceil(al.hp), al.maxHp, (al.flash > 0 ? 2 : 0) | (al.moving ? 8 : 0), +al.aim.toFixed(2), gangIdx(al.team), al.follow || 0, al.tier, al.civ || 0, al.melee ? 1 : 0]);
+    A.push([al.id, r1(al.x), r1(al.y), Math.ceil(al.hp), al.maxHp, (al.flash > 0 ? 2 : 0) | (al.moving ? 8 : 0), +al.aim.toFixed(2), gangIdx(al.team), al.follow || 0, al.tier, al.civ || 0, al.melee ? 1 : 0, al.lvl || 1]);
   }
   const Tu = [];
   for (const t of game.turrets.values()) {

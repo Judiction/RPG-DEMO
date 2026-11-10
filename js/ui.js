@@ -6,7 +6,7 @@ import {
   GANG_COLORS, GANG_COLOR_NAMES, GANG_DEFAULT_NAMES, NAME_COLORS, BIOME_LABEL, MAX_WEAPON_LVL, weaponMult, weaponUpgradePrice,
   TILE, randomLook, MAP_TYPES, MAP_TYPE_IDS, MAP_SIZES, VEHICLES, VEHICLE_IDS, BATTERY_PRICE, TURRETS, TURRET_IDS,
   TURRET_MAX_MK, turretMult, turretUpgradePrice, COMPOUND_UPS, COMPOUND_UP_IDS, PVP_WIN_SHARE, FOLLOWER_MAX,
-  DRINKS, STIMS, ITEMS, BELT_SIZE, WANTED, BAD_BATCH,
+  DRINKS, STIMS, ITEMS, BELT_SIZE, WANTED, BAD_BATCH, BOCA,
 } from './data.js';
 import { T, generateWorld, mapImageData } from './world.js';
 import { charSprite, armSprite, playerSpec, mk, turretHead, vehicleSprite } from './sprites.js';
@@ -991,7 +991,10 @@ export function createUI(root, cb) {
     const up = rs.up, slots = rs.slots || [];
     const gc = s.gangColor;
     const nSlots = 2 + up.level;
-    let html = `<p class="tab-intro">Spend the <b>gang vault</b> (${money(s.vault)}) on this compound's defenses. Turrets shoot raiders and rival gangs, and come back online ${60}s after being destroyed. Upgrades are lost if the district falls.</p><div class="slot-grid">`;
+    const bl = up.boca || 0, bs = BOCA.spend[bl];
+    const perMin = Math.round((60 / BOCA.interval[bl]) * (bs[0] + bs[1]) / 2);
+    let html = `<div class="boca-box"><b>BOCA DE FUMO</b> · level ${bl + 1}/4 · about <b>R$${perMin}/min</b> into the vault (more when the locals like you). Upgrade it below for more customers.</div>
+      <p class="tab-intro">Spend the <b>gang vault</b> (${money(s.vault)}) on this compound's defenses. Turrets shoot raiders and rival gangs, and come back online ${60}s after being destroyed. Upgrades are lost if the district falls.</p><div class="slot-grid">`;
     for (let i = 0; i < 4; i++) {
       const sl = slots[i];
       if (i >= nSlots) { html += `<div class="tslot locked"><div class="c-name">SLOT ${i + 1}</div><div class="c-desc">Locked — buy <b>Fortify</b></div></div>`; continue; }
@@ -1069,6 +1072,7 @@ export function createUI(root, cb) {
           <p><b>TAB</b> map + waypoints · <b>Enter</b> chat · <b>M</b> mute music</p>
         </div>
         <button class="btn" data-set="quality">GRAPHICS: ${s && s.quality === 'low' ? 'LOW (faster)' : 'HIGH'}</button>
+        <button class="btn" data-set="blood">BLOOD: ${s && s.blood === false ? 'OFF' : 'ON'}</button>
         ${s && s.isHost ? '<button class="btn" data-set="save">SAVE NOW</button>' : ''}
         <button class="btn danger" data-set="leave">${s && s.isHost ? 'SAVE & QUIT TO TITLE' : 'LEAVE GAME'}</button>
       </div>`);

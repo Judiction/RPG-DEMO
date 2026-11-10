@@ -362,3 +362,7 @@ input { font-family: var(--head); }
 .beltview .bv.empty { padding: 3px 8px; opacity: .5; }
 .card.item img.iimg { width: 48px; height: 48px; }
 .card.item.stims { border-color: #5a1a3a; background: rgba(40, 10, 30, .9); }
+
+/* ------------------------------------------------------------ round 5: boca */
+.boca-box { background: rgba(125, 255, 90, .08); border: 2px solid #3a7a2a; color: #d8ffd0; padding: 6px 10px; margin-bottom: 10px; font-size: 18px; }
+.boca-box b { color: #7dff5a; font-weight: 400; font-family: var(--head); font-size: 12px; }

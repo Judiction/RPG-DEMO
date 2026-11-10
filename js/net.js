@@ -7,7 +7,7 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const TIMEOUT = 12000;
 const PART = 14000;
 
-export const PROTOCOL = 6;
+export const PROTOCOL = 7;
 
 export function makeCode() {
   let c = '';

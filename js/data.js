@@ -231,7 +231,16 @@ export const COMPOUND_UPS = {
   medic: { name: 'Medic Post', desc: 'Heals your players, guards and crew inside the compound', prices: [900] },
   pad: { name: 'Charge Pad', desc: 'Recharges and repairs flying vehicles parked here', prices: [700] },
   radar: { name: 'Radar Tower', desc: 'Shows hostiles in this district on your minimap; +15s raid warning here', prices: [600] },
+  boca: { name: 'Boca de Fumo', desc: 'More customers come, and they spend more. The money goes to the gang vault', prices: [900, 2400, 5000] },
 };
+// the boca de fumo in every gang compound: locals walk in and buy (money → gang vault). Index = upgrade level.
+export const BOCA = {
+  interval: [14, 10, 7.5, 5.5],                    // seconds between customers (better reputation = more often)
+  spend: [[10, 18], [15, 25], [20, 34], [28, 46]],  // R$ per customer
+  maxWalking: 4,                                    // customers on their way at once (per boca)
+};
+// crew (followers) level up with kills
+export const CREW_LVL = { kills: [0, 3, 8, 15, 25], hp: 0.25, dmg: 0.2, rate: 0.08 };
 export const COMPOUND_UP_IDS = Object.keys(COMPOUND_UPS);
 
 // ------------------------------------------------------------------ raids
@@ -357,6 +366,10 @@ export const POLICE_WAVES = [
 
 // ------------------------------------------------------------------ bar interior layout (pixels, interior space)
 // One shared layout (colors and names change per bar). Solid rects block movement.
+// machines bleed oil and sparks instead of blood (faction → tiers that are drones, mechs, armored trucks)
+const MECH_TIERS = { 0: [5], 1: [1, 5], 2: [5], 3: [4, 5] };
+export const isMech = (faction, tier, boss = false) => !boss && !!(MECH_TIERS[faction] && MECH_TIERS[faction].includes(tier));
+
 export const BAR_ROOM = {
   w: 544, h: 304,
   door: { x: 272, y: 300 },

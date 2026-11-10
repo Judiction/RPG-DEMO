@@ -73,6 +73,56 @@ function stains(S, rnd, n) { for (let i = 0; i < n; i++) { const x = (rnd() * S.
 function bricks(S, rnd, x0, y0, w, h, col) {
   for (let y = y0; y < y0 + h; y += 3) for (let x = x0 + ((y / 3) % 2 ? 0 : 2); x < x0 + w; x += 5) S.P(x, y, 4, 2, shade(col, (rnd() - 0.5) * 0.18));
 }
+
+// exposed favela brick (tijolo baiano): staggered bricks over grey mortar, a few darker or missing ones
+function brickFill(S, rnd, x0, y0, w, h, col) {
+  S.P(x0, y0, w, h, '#6a5a50');
+  for (let y = y0, row = 0; y < y0 + h; y += 3, row++) {
+    for (let x = x0 - (row % 2 ? 3 : 0); x < x0 + w; x += 6) {
+      const bx = Math.max(x0, x), bw = Math.min(x + 5, x0 + w) - bx;
+      if (bw <= 0) continue;
+      const r = rnd();
+      S.P(bx, y, bw, Math.min(2, y0 + h - y), r < 0.04 ? '#2a1a16' : shade(col, (r - 0.5) * 0.26));
+    }
+  }
+}
+// pixação: tall, angular wall writing
+function pixacao(S, rnd, x, y, w, col) {
+  const c = col || ['#141018', '#141018', '#f2f2f2', '#ff3f8e', '#22e5ff', '#ffd23f'][(rnd() * 6) | 0];
+  let xx = x;
+  for (let i = 0; i < 7 && xx < x + w - 3; i++) {
+    const hh = 4 + ((rnd() * 3) | 0), k = rnd();
+    S.P(xx, y - hh + 4, 1, hh, c);
+    if (k < 0.4) { S.P(xx, y - hh + 4, 3, 1, c); S.P(xx + 2, y - hh + 4, 1, hh, c); }
+    else if (k < 0.7) { S.P(xx + 1, y, 2, 1, c); S.P(xx + 2, y - 2, 1, 2, c); }
+    else S.P(xx, y + 1, 3, 1, c);
+    xx += 4;
+  }
+}
+// tangled electric cables ("gatos") across a wall
+function cables(S, rnd, len, y0, y1, n) {
+  for (let k = 0; k < n; k++) {
+    const ya = y0 + rnd() * (y1 - y0), yb = y0 + rnd() * (y1 - y0), sag = 2 + rnd() * 4;
+    for (let x = 0; x < len; x++) { const t = x / len; S.P(x, Math.round(ya + (yb - ya) * t + Math.sin(t * Math.PI) * sag), 1, 1, '#141018'); }
+  }
+}
+// a neon word in a dark box (emissive, two colors when animated)
+function neonLabel(S, text, c, c2, cx, y) {
+  const t0 = textSprite(text, c, null), t1 = textSprite(text, c2 || c, null);
+  const w = t0.width + 6, x = Math.round(cx - w / 2);
+  S.P(x, y, w, 11, '#0c0814');
+  S.E(x, y, w, 1, c, c2); S.E(x, y + 10, w, 1, c, c2); S.E(x, y, 1, 11, c, c2); S.E(x + w - 1, y, 1, 11, c, c2);
+  S.g.drawImage(t0, x + 3, y + 3); S.g0.drawImage(t0, x + 3, y + 3); S.g1.drawImage(t1, x + 3, y + 3);
+  if (c2 && c2 !== c) S.anim = true;
+}
+function puxadinho(S, rnd, x, y, w, h) {
+  S.P(x + 1, y + h, w, 2, 'rgba(0,0,0,0.3)');
+  brickFill(S, rnd, x, y, w, h, ['#a8543a', '#b05a3e', '#9a4a34'][(rnd() * 3) | 0]);
+  S.P(x, y, w, 1, '#c87a5a'); S.P(x, y, 1, h, '#c06a4a');
+  S.P(x + 2, y + 2, Math.max(2, w - 4), Math.max(2, h - 4), '#5a4a42');            // open top: you see the slab inside
+  for (let i = x + 2; i < x + w - 2; i += 3) S.P(i, y + 2, 1, 1, '#3a2a20');
+  if (w > 8) S.P(x + w - 5, y + h - 1, 3, 1, '#2a1a16');
+}
 function cornice(S, col) { S.P(0, 0, S.w, 3, shade(col, 0.18)); S.P(0, 3, S.w, 1, shade(col, -0.4)); }
 function groundLine(S) { S.P(0, S.h - 2, S.w, 2, 'rgba(0,0,0,0.35)'); }
 
@@ -116,58 +166,109 @@ function paintWall(b, side, len, rnd, tint = '#ff3f8e') {
   const floorY = (f) => 4 + f * F;                       // top of floor f (0 = top floor)
   const st = b.style;
   const pick = (a) => a[(rnd() * a.length) | 0];
+  // ---- favela-fortress styles (gang turf): exposed brick, neon in the owner's color, cables, tags
+  const KCOL = { arsenal: '#ff3f8e', clinic: '#3ddc84', locker: '#22e5ff', vault: '#ffd23f', garage: '#ff8a3d', boca: '#7dff5a' };
+  const KNAME = { arsenal: 'ARSENAL', clinic: 'CLINICA', locker: 'ARMARIO', vault: 'COFRE', garage: 'GARAGEM', boca: 'BOCA' };
   if (st === 'cwall') {
-    // compound wall: concrete panels with the owner's color band and lights
-    const big = H >= 18;
-    P(0, 0, len, H, '#4a4656');
-    for (let x = 0; x < len; x += 16) { P(x, 0, 1, H, '#3a3646'); P(x + 1, 0, 1, H, '#5a566a'); }
-    speckle(P, rnd, 0, 0, len, H, len / 2, ['#423e4e', '#56526a']);
-    P(0, 0, len, 2, '#8a8698'); P(0, 2, len, 1, '#2a2636');
-    P(0, big ? 5 : 4, len, big ? 4 : 3, shade(tint, -0.25));
-    S.E(0, big ? 6 : 5, len, 1, tint);
-    for (let x = 6; x < len; x += 16) S.E(x, big ? 12 : 9, 2, 1, shade(tint, 0.4));
-    if (big) for (let x = 0; x < len; x += 6) P(x, H - 3, 3, 2, x % 12 ? '#141018' : '#ffd23f');
-    if (rnd() < 0.4) tag(S, rnd, 3 + ((rnd() * Math.max(1, len - 20)) | 0), H - (big ? 9 : 7), 18);
+    // low brick wall with a concrete cap, a neon tube in the owner's color, tags and a few broken bricks
+    brickFill(S, rnd, 0, 0, len, H, pick(['#a8543a', '#9a4a34', '#b05a3e']));
+    P(0, 0, len, 2, '#b8ac98'); P(0, 2, len, 1, '#4a342a');
+    for (let x = 0; x < len; x += 13) { const w = 10 + ((rnd() * 3) | 0); S.E(x, 3, Math.min(w, len - x), 1, tint); }
+    for (let i = 0; i < len / 30; i++) { const x = (rnd() * (len - 4)) | 0, y = 4 + ((rnd() * (H - 7)) | 0); P(x, y, 4, 2, '#2a1a16'); }
+    for (let x = 8; x < len - 4; x += 24) { P(x, 5, 3, 2, '#2a2a32'); S.E(x + 1, 5, 1, 1, '#fff2c0'); }
+    if (rnd() < 0.75) pixacao(S, rnd, 2 + ((rnd() * Math.max(1, len - 26)) | 0), H - 7, 24, rnd() < 0.5 ? tint : null);
+    cables(S, rnd, len, 5, H - 3, 1);
     groundLine(S);
     return S;
   }
-  if (st === 'hq') {
-    // main-base building: dark armored walls, gang-color trims, a big lit door facing the yard
-    const K = { arsenal: '#ff3f8e', clinic: '#3ddc84', locker: '#22e5ff', vault: '#ffd23f' }[b.kind] || '#fff';
-    P(0, 0, len, H, '#2e2a3a');
-    for (let x = 0; x < len; x += 8) P(x, 0, 1, H, '#26222f');
-    cornice(S, '#3e3a4e');
-    S.E(0, 4, len, 1, tint);
-    for (let f = 0; f < fl; f++) {
-      const y0 = floorY(f);
-      P(0, floorY(f + 1) - 1, len, 1, '#1e1a28');
-      if (f < fl - 1) for (let x = 4; x < len - 6; x += 9) win(S, x, y0 + 3, 6, 4, 1.4, '#1a1622');
-    }
+  if (st === 'hq' || st === 'garage' || st === 'boca') {
+    const K = KCOL[b.kind] || tint;
     const doorSide = b.doorN ? 'N' : 'S';
-    if (side === doorSide) {
-      const dw = Math.min(len - 8, 22), dx = ((len - dw) / 2) | 0;
-      P(dx - 2, H - 15, dw + 4, 15, '#1a1622');
-      S.E(dx, H - 13, dw, 13, shade(K, -0.55));
-      for (let y = H - 12; y < H; y += 2) P(dx, y, dw, 1, 'rgba(0,0,0,0.25)');
-      S.E(dx - 2, H - 15, dw + 4, 1, K); S.E(dx - 2, H - 15, 1, 15, K); S.E(dx + dw + 1, H - 15, 1, 15, K);
-      for (let x = 0; x < len; x += 4) P(x, H - 2, 2, 2, x % 8 ? '#141018' : '#ffd23f');
-    } else if (rnd() < 0.6) pipe(S, len - 4, 4, H);
+    const atDoor = side === doorSide;
+    const plaster = pick(['#d9826a', '#e8c26a', '#7fb8d6', '#c8a0e8', '#9ad17a', '#e89ab8']);
+    for (let f = 0; f < fl; f++) {
+      const y0 = f === 0 ? 0 : floorY(f), y1 = floorY(f + 1);
+      // some floors are half plastered and painted, the rest is bare brick
+      brickFill(S, rnd, 0, y0, len, y1 - y0, pick(['#a8543a', '#b05a3e', '#9a4a34']));
+      if (rnd() < 0.35) { const pw = (len * (0.3 + rnd() * 0.5)) | 0, px = rnd() < 0.5 ? 0 : len - pw; P(px, y0, pw, y1 - y0, plaster); speckle(P, rnd, px, y0, pw, y1 - y0, pw * 0.5, [shade(plaster, -0.12), shade(plaster, 0.08)]); }
+      P(0, y1 - 1, len, 1, '#3a2620');
+      // slab edge with a neon strip in the owner's color
+      if (f > 0) { P(0, y0, len, 2, '#8a8078'); S.E(0, y0 + 2, len, 1, f % 2 ? tint : shade(tint, -0.2)); }
+      const ground = f === fl - 1;
+      if (!ground || !atDoor) for (let x = 3 + ((rnd() * 3) | 0); x < len - 6; x += 9 + ((rnd() * 4) | 0)) {
+        win(S, x, y0 + 4, 5, 5, 1.3, '#3a2a24');
+        P(x, y0 + 6, 5, 1, '#5a5a66'); for (let gx = x + 1; gx < x + 5; gx += 2) P(gx, y0 + 4, 1, 5, 'rgba(60,60,70,0.8)');
+        if (rnd() < 0.18) acUnit(S, x, y0 + 9);
+      }
+      if (!ground && rnd() < 0.3) { const lx = 2 + ((rnd() * Math.max(1, len - 16)) | 0); P(lx, y1 - 4, 14, 1, '#c8c0b0'); for (let i = 1; i < 13; i += 3) P(lx + i, y1 - 3, 2, 2 + ((rnd() * 2) | 0), pick(CLOTHES)); }
+    }
+    P(0, 0, len, 3, '#8a8078'); P(0, 3, len, 1, '#2a1a16');
+    S.E(0, 4, len, 1, tint);
+    if (rnd() < 0.5) for (let i = 0; i < 4; i++) P(3 + i * 4, 0, 1, 3, '#4a2a20');      // rebar sticking out of the top
+    cables(S, rnd, len, 6, H - 14, 2);
+    if (atDoor) {
+      if (st === 'garage') {
+        // roll-up door: steel slats, neon frame, hazard stripes, the name on top
+        const dw = Math.max(16, len - 14), dx = ((len - dw) / 2) | 0, dh = Math.min(H - 8, 20);
+        P(dx - 2, H - dh - 2, dw + 4, dh + 2, '#1a1418');
+        for (let y = H - dh; y < H - 2; y += 2) { P(dx, y, dw, 1, '#6a6a76'); P(dx, y + 1, dw, 1, '#4a4a56'); }
+        S.E(dx - 2, H - dh - 2, dw + 4, 1, K); S.E(dx - 2, H - dh - 2, 1, dh + 2, K); S.E(dx + dw + 1, H - dh - 2, 1, dh + 2, K);
+        for (let x = dx; x < dx + dw; x += 4) P(x, H - 3, 2, 2, '#ffd23f');
+        for (const lx of [dx - 6, dx + dw + 3]) if (lx > 0 && lx < len - 3) { P(lx, H - dh, 3, 3, '#2a2a32'); S.E(lx + 1, H - dh + 1, 1, 2, '#fff2c0'); }
+        neonLabel(S, KNAME.garage, K, '#ffd23f', len / 2, H - dh - 13);
+      } else if (st === 'boca') {
+        // the counter window with a grate, the neon sign and posters
+        const ww = Math.min(len - 8, 14), wx = ((len - ww) / 2) | 0, wy = H - 14;
+        P(wx - 1, wy - 1, ww + 2, 9, '#1a1418');
+        S.E(wx, wy, ww, 7, '#5a3a1a', '#4a3010');
+        for (let gx = wx; gx < wx + ww; gx += 2) P(gx, wy, 1, 7, 'rgba(40,40,48,0.9)');
+        P(wx - 2, wy + 7, ww + 4, 2, '#6a5a4a');
+        for (let x = 0; x < len; x += 4) P(x, wy - 4, 3, 2, x % 8 ? shade(tint, -0.3) : '#f2f2f2');      // striped awning
+        P(0, wy - 2, len, 1, 'rgba(0,0,0,0.35)');
+        neonLabel(S, KNAME.boca, K, '#ff3fa4', len / 2, wy - 15);
+        for (const px of [1, len - 6]) if (len > 20) { P(px, H - 12, 5, 7, pick(['#ff3f8e', '#ffd23f', '#22e5ff', '#3ddc84'])); P(px + 1, H - 10, 3, 1, '#120a1c'); }
+        S.anim = true;
+      } else {
+        // shop door: big doorway lit in the shop's color, the name in neon above it
+        const dw = Math.min(len - 10, 18), dx = ((len - dw) / 2) | 0;
+        P(dx - 2, H - 15, dw + 4, 15, '#1a1418');
+        S.E(dx, H - 13, dw, 13, shade(K, -0.6));
+        for (let y = H - 12; y < H; y += 2) P(dx, y, dw, 1, 'rgba(0,0,0,0.28)');
+        S.E(dx - 2, H - 15, dw + 4, 1, K); S.E(dx - 2, H - 15, 1, 15, K); S.E(dx + dw + 1, H - 15, 1, 15, K);
+        neonLabel(S, KNAME[b.kind] || '', K, '#ffffff', len / 2, H - 28);
+        for (let x = 0; x < len; x += 4) P(x, H - 2, 2, 2, x % 8 ? '#141018' : '#ffd23f');
+      }
+    } else {
+      if (rnd() < 0.5) pipe(S, len - 4, 4, H);
+      if (rnd() < 0.8) pixacao(S, rnd, 2 + ((rnd() * Math.max(1, len - 30)) | 0), H - 8, 28, rnd() < 0.6 ? tint : null);
+    }
     S.E(0, H - 1, len, 1, shade(tint, -0.2));
     return S;
   }
-  if (st === 'shack') {
-    // outpost shack: patched plaster + corrugated metal, gang tag in the owner's color
-    const col = pick(['#b8a088', '#c89a7a', '#8aa0a8', '#a8b090', '#c8b8a0', '#9a8070']);
-    P(0, 0, len, H, col);
-    speckle(P, rnd, 0, 0, len, H, len, [shade(col, -0.1), shade(col, 0.08)]);
-    if (rnd() < 0.5) bricks(S, rnd, 0, H / 2, len, H / 2, '#a0583a');
-    for (let x = (rnd() * 8) | 0; x < len - 6; x += 12) { P(x, 3, 8, H - 6, '#7a8090'); for (let xx = x; xx < x + 8; xx += 2) P(xx, 3, 1, H - 6, '#5a606e'); }
-    cornice(S, col);
-    for (let x = 3; x < len - 4; x += 9) win(S, x, 6, 3, 4, 1.2, '#3a2a2a');
-    if (side === (b.doorN ? 'N' : 'S')) { const d = (len / 2 - 3) | 0; P(d, H - 10, 6, 10, '#2a1e1e'); S.E(d + 1, H - 10, 4, 1, '#ffd88a'); }
-    // painted gang tag (owner color)
-    let xx = 2 + ((rnd() * 4) | 0);
-    for (let i = 0; i < 4 && xx < len - 4; i++) { const hh = 3 + ((rnd() * 3) | 0); P(xx, H - 8, 1, hh, tint); P(xx, H - 8, 3, 1, tint); if (rnd() < 0.5) P(xx + 2, H - 8, 1, hh, tint); xx += 4; }
+  if (st === 'shack' || st === 'brick') {
+    // favela house: bare brick, some painted plaster, small grated windows, laundry, tags, a bit of the gang's neon
+    for (let f = 0; f < fl; f++) {
+      const y0 = f === 0 ? 0 : floorY(f), y1 = floorY(f + 1);
+      if (rnd() < 0.62) brickFill(S, rnd, 0, y0, len, y1 - y0, pick(['#a8543a', '#b05a3e', '#9a4a34', '#b8683e']));
+      else { const col = pick(FAVELA_WALLS); P(0, y0, len, y1 - y0, col); speckle(P, rnd, 0, y0, len, y1 - y0, len * 0.6, [shade(col, -0.1), shade(col, 0.06)]); if (rnd() < 0.5) brickFill(S, rnd, (rnd() * len * 0.6) | 0, y0 + 3, 10, 5, '#a8543a'); }
+      P(0, y1 - 1, len, 1, '#3a2620');
+      const ground = f === fl - 1;
+      for (let x = 2 + ((rnd() * 4) | 0); x < len - 4; x += 7 + ((rnd() * 5) | 0)) {
+        if (ground && side === (b.doorN ? 'N' : 'S') && x > len / 2 - 6 && x < len / 2 + 4) continue;
+        win(S, x, y0 + 4, 3, 4, 1, '#3a2a24');
+        P(x + 1, y0 + 4, 1, 4, 'rgba(60,60,70,0.7)');
+      }
+      if (!ground && rnd() < 0.4) { const lx = 2 + ((rnd() * Math.max(1, len - 16)) | 0); P(lx, y1 - 4, 14, 1, '#c8c0b0'); for (let i = 1; i < 13; i += 3) P(lx + i, y1 - 3, 2, 2 + ((rnd() * 2) | 0), pick(CLOTHES)); }
+      if (rnd() < 0.25) acUnit(S, len - 7, y0 + 3);
+    }
+    P(0, 0, len, 2, '#8a8078');
+    if (rnd() < 0.5) for (let i = 0; i < 3; i++) P(2 + i * 4, 0, 1, 3, '#4a2a20');
+    // corrugated metal patch
+    if (rnd() < 0.4) { const x = (rnd() * Math.max(1, len - 10)) | 0; P(x, 3, 9, H - 6, '#7a8090'); for (let xx = x; xx < x + 9; xx += 2) P(xx, 3, 1, H - 6, '#5a606e'); }
+    if (side === (b.doorN ? 'N' : 'S')) { const d = (len / 2 - 3) | 0; P(d, H - 10, 6, 10, '#2a1e1e'); P(d + 1, H - 9, 4, 9, pick(['#4a6a8a', '#8a3a3a', '#3a6a4a', '#5a4a3a'])); S.E(d, H - 11, 6, 1, rnd() < 0.5 ? tint : '#ffd88a'); }
+    if (rnd() < 0.7) pixacao(S, rnd, 2, H - 8, len - 6, rnd() < 0.45 ? tint : null);
+    if (rnd() < 0.35) S.E(1, 5, len - 2, 1, tint);
+    cables(S, rnd, len, 4, H - 4, 1);
     groundLine(S);
     return S;
   }
@@ -378,40 +479,63 @@ function paintRoof(b, rnd, tint = '#ff3f8e') {
   const antenna = (x, y) => { P(x, y, 1, 1, '#c8c8d0'); P(x - 1, y + 1, 3, 1, '#56606e'); S.blinks.push({ x, y }); };
   S.blinks = [];
   if (st === 'cwall') {
-    P(0, 0, W, D, '#6a6676');
-    P(0, 0, W, 1, '#8a8698'); P(0, D - 1, W, 1, '#3a3646'); P(0, 0, 1, D, '#7a7688'); P(W - 1, 0, 1, D, '#3a3646');
+    // top of the brick wall: cap stones, the neon tube, broken glass set in the cement
+    P(0, 0, W, D, '#b8ac98');
+    speckle(P, rnd, 0, 0, W, D, W * D / 6, ['#a89c88', '#c8bca8', '#8a7e6c']);
+    P(0, 0, W, 1, '#d8ccb8'); P(0, D - 1, W, 1, '#6a5e4c');
     const along = W > D;
-    if (along) { S.E(0, (D / 2) | 0, W, 1, tint); for (let x = 2; x < W; x += 6) P(x, 2, 2, 1, '#9a96a8'); }
-    else { S.E((W / 2) | 0, 0, 1, D, tint); for (let y = 2; y < D; y += 6) P(2, y, 1, 2, '#9a96a8'); }
-    if (b.H >= 18) for (let i = 4; i < (along ? W : D); i += 16) { if (along) S.E(i, 2, 2, 2, '#fff2c0'); else S.E(2, i, 2, 2, '#fff2c0'); }
+    if (along) S.E(0, (D / 2) | 0, W, 1, tint); else S.E((W / 2) | 0, 0, 1, D, tint);
+    for (let i = 0; i < (along ? W : D) / 3; i++) { const a = (rnd() * (along ? W : D)) | 0, c = rnd() < 0.5 ? '#9af0d0' : '#c8f0ff'; if (along) P(a, rnd() < 0.5 ? 2 : D - 4, 1, 1, c); else P(rnd() < 0.5 ? 2 : W - 4, a, 1, 1, c); }
     return S;
   }
-  if (st === 'hq') {
-    const K = { arsenal: '#ff3f8e', clinic: '#3ddc84', locker: '#22e5ff', vault: '#ffd23f' }[b.kind] || '#fff';
-    const col = '#2e2a3a';
+  if (st === 'hq' || st === 'garage' || st === 'boca') {
+    const K = { arsenal: '#ff3f8e', clinic: '#3ddc84', locker: '#22e5ff', vault: '#ffd23f', garage: '#ff8a3d', boca: '#7dff5a' }[b.kind] || tint;
+    if (st === 'garage') {
+      // corrugated metal roof with skylights and a big painted gear
+      const col = '#7a6a64';
+      P(0, 0, W, D, col);
+      for (let x = 0; x < W; x += 3) { P(x, 0, 1, D, '#665650'); P(x + 1, 0, 1, D, '#8e7c74'); }
+      for (let i = 0; i < 3; i++) P((rnd() * (W - 12)) | 0, (rnd() * (D - 6)) | 0, 10, 4, 'rgba(120,60,30,0.35)');
+      for (let x = 8; x < W - 10; x += 22) { P(x, 4, 10, 6, '#1d2a44'); S.E(x + 1, 5, 8, 1, '#5a7ad8'); }
+      drawLogo((x, y, w, h, c) => P(x, y, w, h, c), 'gear', ((W - 14) / 2) | 0, D - 17, shade(K, -0.1), null, 2);
+      parapet('#5a4a42');
+      S.E(1, 1, W - 2, 1, tint); S.E(1, D - 2, W - 2, 1, tint);
+      vent(W - 10, 3); vent(3, D - 9);
+      return S;
+    }
+    // laje: bare concrete slab, water tanks, rebar, satellite dish, plastic chairs, the shop's emblem painted on
+    const col = '#9a8270';
     P(0, 0, W, D, col);
-    speckle(P, rnd, 0, 0, W, D, W * D / 12, ['#28242f', '#36324a']);
-    parapet(col);
-    S.E(1, 1, W - 2, 1, tint); S.E(1, D - 2, W - 2, 1, tint); S.E(1, 1, 1, D - 2, tint); S.E(W - 2, 1, 1, D - 2, tint);
-    // big painted emblem of the building's job
-    const cx = (W / 2) | 0, cy = (D / 2) | 0, r = Math.min(W, D) / 2 - 5;
-    for (let a = 0; a < 40; a++) { const an = a / 40 * Math.PI * 2; S.E(Math.round(cx + Math.cos(an) * r), Math.round(cy + Math.sin(an) * r), 1, 1, K); }
+    speckle(P, rnd, 0, 0, W, D, W * D / 8, ['#8a7262', '#a89080', '#7a6454', '#b0907a']);
+    for (let i = 0; i < 3; i++) P(rnd() * (W - 8), rnd() * (D - 6), 4 + rnd() * 8, 2 + rnd() * 4, 'rgba(40,30,30,0.2)');
+    // brick parapet with the owner's neon
+    for (let x = 0; x < W; x += 3) { P(x, 0, 2, 2, '#a8543a'); P(x, D - 2, 2, 2, '#9a4a34'); }
+    for (let y = 0; y < D; y += 3) { P(0, y, 2, 2, '#a8543a'); P(W - 2, y, 2, 2, '#8a4430'); }
+    for (let x = 3; x < W - 3; x += 3) { S.E(x, 2, 1, 1, tint); S.E(x, D - 3, 1, 1, tint); }
+    for (let y = 3; y < D - 3; y += 3) { S.E(2, y, 1, 1, tint); S.E(W - 3, y, 1, 1, tint); }
+    if (st === 'boca') {
+      // tarp in the owner's color, a lookout's chair and a kite
+      const tw = Math.min(W - 6, 14), th = Math.min(D - 6, 10);
+      P(3, 3, tw, th, shade(tint, -0.2)); for (let x = 6; x < 3 + tw; x += 4) P(x, 3, 1, th, shade(tint, -0.45));
+      P(W - 9, D - 9, 5, 5, '#e8e8e0'); P(W - 9, D - 9, 5, 1, '#ffffff');
+      P(W - 8, 4, 5, 5, '#ff3fa4'); P(W - 7, 5, 3, 3, '#ffd23f'); P(W - 6, 9, 1, 4, '#c8c0b0');
+      S.E(((W / 2) | 0) - 1, ((D / 2) | 0) - 1, 3, 3, K, '#ff3fa4'); S.anim = true;
+      return S;
+    }
+    // the unfinished room on top (puxadinho) and a painted tarp
+    const pw = Math.max(10, (W * 0.34) | 0), ph = Math.max(8, (D * 0.42) | 0);
+    const pr = rnd() < 0.5;
+    puxadinho(S, rnd, pr ? W - pw - 4 : 4, D - ph - 4, pw, ph);
+    { const tw = Math.max(8, (W * 0.22) | 0), th = Math.max(6, (D * 0.25) | 0), tx = pr ? 4 : W - tw - 4, ty = D - th - 5; P(tx, ty, tw, th, pick(['#2a6ad8', '#d8a02a', '#3a9a4a', '#c83a3a'])); for (let x = tx + 2; x < tx + tw; x += 3) P(x, ty, 1, th, 'rgba(0,0,0,0.18)'); }
+    const cx = (W / 2) | 0, cy = Math.max(9, ((D - ph) / 2) | 0), r = Math.min(W, D - ph) / 2 - 3;
+    for (let a = 0; a < 36; a++) { const an = a / 36 * Math.PI * 2; S.E(Math.round(cx + Math.cos(an) * r), Math.round(cy + Math.sin(an) * r), 1, 1, K); }
     const icon = { arsenal: 'star', clinic: 'cross', locker: 'box', vault: 'coin' }[b.kind] || 'star';
     drawLogo((x, y, w, h, c) => S.E(x, y, w, h, c), icon, cx - 7, cy - 7, K, shade(K, 0.4), 2);
-    for (let i = 0; i < 2; i++) { const x = 4 + i * (W - 16), y = D - 10; P(x, y, 8, 6, '#c8c8d0'); P(x + 2, y + 2, 4, 3, '#5a5a66'); }
-    S.blinks.push({ x: W - 4, y: 3 });
-    return S;
-  }
-  if (st === 'shack') {
-    const col = pick(['#8a8494', '#7a8090', '#9a7a5a']);
-    P(0, 0, W, D, col);
-    for (let x = 0; x < W; x += 3) { P(x, 0, 1, D, shade(col, -0.2)); P(x + 1, 0, 1, D, shade(col, 0.1)); }
-    for (let i = 0; i < 2; i++) P(rnd() * (W - 8), rnd() * (D - 6), 6 + rnd() * 6, 4 + rnd() * 4, rnd() < 0.5 ? '#8a5a3a' : '#5a6a7a');
-    // tarp in the owner's color + a little flag
-    const tw = Math.min(W - 4, 14), th = Math.min(D - 4, 9), tx = 2 + ((rnd() * (W - tw - 4)) | 0), ty = 2 + ((rnd() * (D - th - 4)) | 0);
-    P(tx, ty, tw, th, shade(tint, -0.25)); P(tx, ty, tw, 1, shade(tint, 0.2)); for (let x = tx + 3; x < tx + tw; x += 4) P(x, ty, 1, th, shade(tint, -0.4));
-    if (rnd() < 0.6) { P(W - 8, D - 8, 6, 5, '#1d1d24'); P(W - 7, D - 7, 4, 3, '#2a2a36'); }
-    parapet(col);
+    tank(4, 4);
+    if (W > 60) tank(W - 14, 4);
+    dish(W - 9, D - 9);
+    { const y = 6 + ((rnd() * 4) | 0), x0 = (W * 0.3) | 0; P(x0, y, W * 0.4, 1, '#c8c0b0'); for (let x = x0 + 2; x < x0 + W * 0.4; x += 3) P(x, y + 1, 2, 3, pick(CLOTHES)); }
+    antenna(W - 4, 3);
     return S;
   }
   if (st === 'bar') {
@@ -469,12 +593,15 @@ function paintRoof(b, rnd, tint = '#ff3f8e') {
     parapet(col);
     return S;
   }
-  if (st === 'favela') {
-    const col = '#8a8590';
+  if (st === 'favela' || st === 'brick' || st === 'shack') {
+    const col = st === 'favela' ? '#8a8590' : pick(['#9a8270', '#8a7a6e', '#a08a76']);
     P(0, 0, W, D, col);
-    speckle(P, rnd, 0, 0, W, D, W * D / 14, ['#7f7a85', '#96919c', '#6f6a75']);
+    speckle(P, rnd, 0, 0, W, D, W * D / 14, st === 'favela' ? ['#7f7a85', '#96919c', '#6f6a75'] : [shade(col, -0.08), shade(col, 0.07), shade(col, -0.15)]);
+    if (st !== 'favela' && W >= 32 && D >= 32 && rnd() < 0.55) puxadinho(S, rnd, rnd() < 0.5 ? 3 : W - ((W * 0.45) | 0) - 3, 3, (W * 0.45) | 0, (D * 0.45) | 0);
     for (let i = 0; i < 3; i++) P(rnd() * (W - 8), rnd() * (D - 6), 4 + rnd() * 8, 2 + rnd() * 4, 'rgba(40,30,30,0.18)');
     parapet(col);
+    if (st !== 'favela' && rnd() < 0.6) { const tw = Math.min(W - 4, 12), th = Math.min(D - 4, 8), tx = W - tw - 2, ty = D - th - 2; P(tx, ty, tw, th, shade(tint, -0.25)); for (let x = tx + 3; x < tx + tw; x += 4) P(x, ty, 1, th, shade(tint, -0.45)); }
+    if (st !== 'favela' && rnd() < 0.5) S.E(2, 2, W - 4, 1, tint);
     if (rnd() < 0.85) tank(2 + ((rnd() * Math.max(1, W - 13)) | 0), 2 + ((rnd() * Math.max(1, D - 12)) | 0));
     if (rnd() < 0.45) dish(W - 8, D - 8);
     if (rnd() < 0.6) for (let i = 0; i < 4; i++) P(2 + i * 3, D - 5, 1, 3, '#5a3a2a');
@@ -593,7 +720,7 @@ export function buildingArt(b, tint = null) {
   }
   const roof = paintRoof(b, rnd, tint || '#ff3f8e');
   const anim = b.sign ? b.sign.anim : b.board ? b.board.anim : 'steady';
-  const litMul = { hq: 1.4, bar: 1.2, shack: 0.9, cwall: 0, tower: 1.25, apartment: 1.1, shop: 0.9, favela: 0.9, house: 0.8, club: 0.4, church: 0.6, warehouse: 0.35, factory: 0.5, kiosk: 0.6, ruin: 0, container: 0 }[b.style] ?? 0.8;
+  const litMul = { hq: 1.4, bar: 1.2, shack: 0.9, cwall: 0, garage: 0.6, boca: 1.3, brick: 1.0, tower: 1.25, apartment: 1.1, shop: 0.9, favela: 0.9, house: 0.8, club: 0.4, church: 0.6, warehouse: 0.35, factory: 0.5, kiosk: 0.6, ruin: 0, container: 0 }[b.style] ?? 0.8;
   const art = { W, D, H: b.H, k: projK(b.H), walls, roof, anim: b.style === 'bar' ? 'swap' : anim, seed: (b.seed % 1000) / 10, litMul, bakeKey: '', baked: null };
   if (tint) b._arts[tint] = art;
   b._art = art;

@@ -8,7 +8,7 @@
 
 import {
   TILE, WEAPONS, ABILITIES, randomLook, LOOK_KEYS, LOOK_OPTIONS, GANG_COLORS, NAME_COLORS, VEHICLES, VEHICLE_IDS,
-  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL, BAR_ROOM, ITEMS, WANTED,
+  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL, BAR_ROOM, ITEMS, WANTED, isMech,
 } from './data.js';
 import { randomSeed } from './rng.js';
 import { generateWorld, moveBox, regionAt, rayCast, opaqueAt } from './world.js';
@@ -37,7 +37,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
   del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
 };
-const prefs = Object.assign({ name: '', look: randomLook(), gangName: '', gangColor: GANG_COLORS[0], color: NAME_COLORS[0], music: 0.6, sfx: 0.8, quality: 'high' }, store.get(PREFS_KEY) || {});
+const prefs = Object.assign({ name: '', look: randomLook(), gangName: '', gangColor: GANG_COLORS[0], color: NAME_COLORS[0], music: 0.6, sfx: 0.8, quality: 'high', blood: true }, store.get(PREFS_KEY) || {});
 for (const k of LOOK_KEYS) if (!(prefs.look[k] >= 0 && prefs.look[k] < LOOK_OPTIONS[k].length)) prefs.look[k] = 0;
 if (!NAME_COLORS.includes(prefs.color)) prefs.color = NAME_COLORS[0];
 if (!GANG_COLORS.includes(prefs.gangColor)) prefs.gangColor = GANG_COLORS[0];
@@ -63,6 +63,7 @@ const metaOf = (s) => ({ mode: s.mode || 'pve', map: s.map || { type: 'coastal',
 const canvas = document.getElementById('game');
 const renderer = createRenderer(canvas);
 renderer.quality = prefs.quality === 'low' ? 'low' : 'high';
+renderer.bloodOn = prefs.blood !== false;
 const input = createInput(canvas);
 window.addEventListener('resize', () => renderer.resize());
 
@@ -99,6 +100,7 @@ const ui = createUI(document.getElementById('menus'), {
     if (k === 'invite') copyInvite();
     if (k === 'leave') leaveGame();
     if (k === 'save') { saveNow(); ui.toast('Game saved.', 'good'); }
+    if (k === 'blood') { prefs.blood = renderer.bloodOn = !renderer.bloodOn; if (!renderer.bloodOn) renderer.stains.length = 0; store.set(PREFS_KEY, prefs); ui.toast(`Blood: ${renderer.bloodOn ? 'ON' : 'OFF'}`, 'good'); ui.togglePause(); ui.togglePause(); }
     if (k === 'quality') { prefs.quality = renderer.quality = renderer.quality === 'low' ? 'high' : 'low'; store.set(PREFS_KEY, prefs); ui.toast(`Graphics: ${renderer.quality.toUpperCase()}`, 'good'); }
   },
 });
@@ -381,7 +383,7 @@ function unpackRegions(rg) {
         owner: G.ownerFromCode(a[0]), garrison: a[1], garrisonMax: a[2], capture: a[3] / 100, guards: a[4], hqUnlocked: !!(a[5] & 1), bossDefeated: !!(a[5] & 2),
         capBy: a[6] === 99 ? 'raid' : a[6] >= 0 ? G.ownerFromCode(a[6]) : null,
       };
-      if (a[7]) { r.up = { level: a[7][0], walls: a[7][1], barracks: a[7][2], medic: a[7][3], pad: a[7][4], radar: a[7][5] }; r.slots = a[8].map((x) => (x ? { type: TURRET_IDS[x[0]], mk: x[1] } : null)); }
+      if (a[7]) { r.up = { level: a[7][0], walls: a[7][1], barracks: a[7][2], medic: a[7][3], pad: a[7][4], radar: a[7][5], boca: a[7][6] || 0 }; r.slots = a[8].map((x) => (x ? { type: TURRET_IDS[x[0]], mk: x[1] } : null)); }
       return r;
     }),
     raids: rg.raids.map((a) => ({ target: a[0], f: a[1], state: a[2] ? 'active' : 'warn', t: a[3], g: a[4], size: a[5] })),
@@ -424,7 +426,7 @@ function applySnapshot(s) {
   });
   syncMap(client.allies, s.A, (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => {
     o.tx = r[1]; o.ty = r[2]; o.hp = r[3]; o.maxHp = r[4]; o.flash = r[5] & 2 ? 0.1 : 0; o.moving = !!(r[5] & 8); o.aim = r[6];
-    o.team = r[7]; o.follow = r[8] || null; o.tier = r[9]; o.civ = r[10] || 0; o.melee = !!r[11];
+    o.team = r[7]; o.follow = r[8] || null; o.tier = r[9]; o.civ = r[10] || 0; o.melee = !!r[11]; o.lvl = r[12] || 1;
   });
   syncMap(client.turrets, s.T || [], (r) => ({ id: r[0] }), (o, r) => {
     o.x = r[1]; o.y = r[2]; o.aim = r[3]; o.hp = r[4]; o.maxHp = r[5]; o.type = TURRET_IDS[r[6]]; o.mk = r[7]; o.team = r[8]; o.dead = !!(r[9] & 1); o.flash = !!(r[9] & 2);
@@ -588,6 +590,7 @@ function handleEvent(ev) {
       const col = { hit: '#ffffff', crit: '#ffd23f', player: '#ff3b5c', heal: '#3ddc84', ally: '#ff9ab8', burn: '#ff8a3d', veh: '#c8c0ff', civ: '#c8c0d8', poison: '#a6ff3f' }[ev.c] || '#fff';
       renderer.text(ev.x + (Math.random() - 0.5) * 6, ev.y, (ev.c === 'heal' ? '+' : '') + ev.v + (ev.c === 'crit' ? '!' : ''), col);
       if (ev.c === 'hit' || ev.c === 'crit') { renderer.burst(ev.x, ev.y + 8, ['#ffffff', '#ffd23f', '#9af0ff'], 4, 50, 0.25); sfx('hit', ev.x, ev.y, 0.6); }
+      if (ev.fy !== undefined && near(ev.x, ev.fy, 420)) renderer.bleed(ev.x, ev.fy - 10, ev.v * (ev.c === 'crit' ? 1.5 : 1), ev.d, !!ev.m, ev.fy);
       break;
     }
     case 'hurt':
@@ -666,10 +669,12 @@ function handleEvent(ev) {
       renderer.effect({ k: 'ring', x: ev.x, y: ev.y - 6, r: 10 * ev.b, c: '#ffffff', life: 0.2 });
       sfx(ev.b > 1.4 ? 'bigdie' : 'die', ev.x, ev.y);
       if (ev.boss) { renderer.addShake(8); renderer.effect({ k: 'boom', x: ev.x, y: ev.y, r: 60, life: 0.8 }); }
+      renderer.pool(ev.x, ev.y, 8 + (ev.b || 1) * 4, ev.f >= 0 && isMech(ev.f, ev.tr, ev.boss));
       break;
     }
     case 'pdie':
       renderer.burst(ev.x, ev.y - 6, ['#ff3b5c', '#ffffff', '#aeb9c9'], 24, 90, 0.9, 120);
+      renderer.pool(ev.x, ev.y, 11, false);
       if (ev.id === app.myId) { sfx('death'); renderer.screenFlash('#ff0030', 0.5); ui.log(`You went down to <b>${escapeHtml(ev.by)}</b>${ev.loss ? ` and dropped <b class="gold">R$${ev.loss}</b>` : ''}.`, 'bad'); }
       else { sfx('die', ev.x, ev.y); ui.log(`<b>${escapeHtml(ev.name)}</b> went down to ${escapeHtml(ev.by)}!`, 'bad'); }
       break;
@@ -767,6 +772,20 @@ function handleEvent(ev) {
       break;
     }
     case 'buy': sfx('buy'); ui.toast(escapeHtml(ev.text), 'gold'); break;
+    case 'sale':
+      if (near(ev.x, ev.y, 260)) { renderer.text(ev.x, ev.y, `+R$${ev.v}`, '#7dff5a', 1.1, -16); sfx('cash', ev.x, ev.y, 0.35); }
+      break;
+    case 'vroll':
+      sfx('venter', ev.x, ev.y);
+      renderer.light(ev.x, ev.y, 110, '#ff8a3d', 0.8, 1.6);
+      renderer.burst(ev.x, ev.y, ['#ff8a3d', '#ffd23f', '#c8c0d8'], 14, 50, 0.6);
+      break;
+    case 'flvl':
+      renderer.effect({ k: 'pillar', x: ev.x, y: ev.y, c: '#ffd23f', life: 0.9 });
+      renderer.burst(ev.x, ev.y - 12, ['#ffd23f', '#ffffff'], 16, 60, 0.8, 0, true);
+      renderer.text(ev.x, ev.y - 30, `LEVEL ${ev.lvl}!`, '#ffd23f', 1.4, -14);
+      if (ev.id === app.myId) { sfx('levelup', ev.x, ev.y, 0.7); ui.toast(`A crew member reached <b>level ${ev.lvl}</b> — tougher, harder hitting, faster.`, 'good'); }
+      break;
     case 'wanted':
       if (ev.id !== app.myId) break;
       if (ev.stars > 0) { sfx('siren'); ui.alert(`${'★'.repeat(ev.stars)} <b>WANTED</b> — the police are coming! Run (lose them), fight (beat the response) or pay them off at the QG.`, 'raid', 5000); }
@@ -967,6 +986,7 @@ function gameFrame(dt, now) {
       else if (spot && spot.shop) ui.openShop(spot.shop, spot.bar);
       else if (me && me.bar >= 0) ui.toast('Walk up to the counter (drinks) or the dealer in the back to buy.', 'warn');
       else if (spot && spot.tab) ui.toggleBase(spot.tab);
+      else if (spot && spot.boca !== undefined) ui.openCompound(spot.boca);
       else if (inBaseLocal()) ui.toggleBase();
       else if (nearOwnCompound() >= 0) ui.openCompound(nearOwnCompound());
       else ui.toast('B opens the base menu at your QG, or the upgrades of a compound you own (stand near its core).', 'warn');
@@ -1110,6 +1130,7 @@ function gameFrame(dt, now) {
     vault: myGangObj.vault, up: myGangObj.up || {}, gangs, mode: view.mode, myGang: myG,
     rs: view.rs, raids: view.raids.map((r) => ({ target: r.target, f: r.f, state: r.state === 'warn' ? 0 : 1, t: Math.max(0, Math.round(r.t)), g: r.g })),
     gangName: myGangObj.name, gangColor: GANG_COLORS[myG], regionId: rid,
+    blood: renderer.bloodOn,
     inBase: inBaseLocal(), nearCompound: nearOwnCompound(), nearVehicle, civPrompt: L.bar >= 0 ? 0 : view.civPrompt, quality: renderer.quality, ctxHint: contextHint(),
     barName: L.bar >= 0 ? world.bars[L.bar].name : '',
     roomCode: app.roomCode, isHost, playerCount: view.players.length, players, enemiesNear, radar: isHost ? st.radar[myGangId()] || [] : client.radar,
@@ -1168,6 +1189,12 @@ function contextSpot() {
     const d = Math.hypot(b.doorX - L.x, b.doorY - L.y);
     if (d < 22) return { door: b.id, bar: b, close: d < 14 };
   }
+  {
+    const r = regionAt(world, L.x, L.y);
+    const rs = r >= 0 ? (app.mode === 'host' ? app.game.rs : client.rg ? client.rg.rs : [])[r] : null;
+    const B = r >= 0 ? world.regions[r].compound.boca : null;
+    if (B && rs && rs.owner === myGangId() && Math.hypot(B.x - L.x, B.y - L.y) < 22) return { boca: r, lvl: rs.up ? rs.up.boca || 0 : 0 };
+  }
   if (inBaseLocal()) {
     const r = regionAt(world, L.x, L.y);
     const C = world.regions[r].compound;
@@ -1189,6 +1216,7 @@ function contextHint() {
   if (s.exit) return 'Walk through the door to go back outside';
   if (s.door !== undefined) return `[E] Enter ${s.bar.name}${s.bar.dealer ? ' · bar + dealer' : ' · bar'}`;
   if (s.tab) return `[B] ${SPOT_NAME[s.tab]}`;
+  if (s.boca !== undefined) return `[B] BOCA DE FUMO (level ${s.lvl + 1}/4) — upgrade it for more customers`;
   return '';
 }
 
@@ -1234,7 +1262,7 @@ function buildView() {
       bar: p.inBar, bx: p.id === 'host' ? L.bx : p.bx, by: p.id === 'host' ? L.by : p.by, emote: p.emoteT > 0 ? p.emote + 1 : 0, ...(() => { const pf = G.profile(p); return { ghost: !!pf.ghost, fury: pf.fury }; })(),
     }));
     enemies = [...g.enemies.values()].map((e) => ({ ...e, burn: e.burnT > 0 }));
-    allies = [...g.allies.values()].filter((a) => !a.hidden).map((a) => ({ id: a.id, x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp, flash: a.flash, moving: a.moving, aim: a.aim, team: G.gangIdx(a.team), follow: a.follow, tier: a.tier, civ: a.civ, melee: a.melee }));
+    allies = [...g.allies.values()].filter((a) => !a.hidden).map((a) => ({ id: a.id, x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp, flash: a.flash, moving: a.moving, aim: a.aim, team: G.gangIdx(a.team), follow: a.follow, tier: a.tier, civ: a.civ, melee: a.melee, lvl: a.lvl || 1 }));
     turrets = [...g.turrets.values()].map((t) => ({ id: t.id, x: t.x, y: t.y, aim: t.aim, hp: t.hp, maxHp: t.maxHp, type: t.type, mk: t.mk, team: G.gangIdx(t.team), dead: t.deadT > 0, flash: t.flash > 0 }));
     vehicles = [...g.vehicles.values()].map((v) => ({ id: v.id, type: v.type, x: v.x, y: v.y, hp: v.hp, maxHp: v.maxHp, charge: v.charge, dir: v.dir, flying: v.flying, flash: v.flash > 0, charging: v.charging, team: G.gangIdx(v.team), seats: v.seats }));
     pickups = [...g.pickups.values()]; projectiles = g.projectiles;

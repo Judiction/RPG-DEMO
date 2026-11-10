@@ -103,8 +103,10 @@ transformers and cars are great for that.
 - **Enemies that kill anyone level up** (players, guards, crew, turrets): they grow into the next, bigger tier and get a ★.
 
 ### The base (QG)
-Your QG is a walled fortress in your gang's color with a building for each shop: **Arsenal, Clínica, Armário and Cofre**
-(plus the **Garagem** yard). Walk up to a building's door and press **B** to open that shop, or press **B** anywhere
+Your QG is an occupied favela block: low brick walls with several alley entrances, a little town of brick houses,
+stalls and laundry lines packed around it, and tall brick buildings inside for each shop — **Arsenal, Clínica,
+Armário, Cofre** and the **Garagem** (new vehicles roll out of its door into the parking bay, where they recharge and
+repair fastest). Your gang hangs out there: dancing at the paredão, sitting at plastic tables, guarding the gates. Walk up to a building's door and press **B** to open that shop, or press **B** anywhere
 inside for the full menu. Inside the QG walls you are **safe**: nobody can shoot, enemies and police won't come for you,
 and the cops wait outside. (During a raid on the QG the safe zone switches off — defend it!)
 - **ARSENAL** buys new **cyber-arms** (weapons) and upgrades them up to Mk5.
@@ -118,6 +120,19 @@ and the cops wait outside. (During a raid on the QG the safe zone switches off �
   Black Market (cheaper shops), Informants (earlier raid warnings), Rescue Squad (faster respawn).
 - **DEFESA** puts turrets and upgrades on the base itself.
 - **Pay off the police**: if you have wanted stars, the base menu lets you pay R$350 per star to clear them.
+
+### Boca de fumo
+Every gang compound has a **boca** (a small building, or a street stall in tiny compounds). Locals walk in from the
+street, buy, and the money goes straight to the **gang vault**. Friendly locals come more often. Stand at the boca and
+press **B** (or use the compound menu) to upgrade it — up to level 4, with more customers who spend more.
+
+### Crew levels
+Your crew (followers) level up with their kills, up to level 5: more health, more damage, faster attacks, and they
+look the part (armor, visors, better weapons, gold stars over their heads). They can still die for good.
+
+### Blood
+Hits spray blood that falls and stains the floor; bodies leave pools; badly hurt characters drip. Drones, mechs and
+armored trucks leak oil and sparks instead. Stains fade after about 30 seconds. **ESC → BLOOD: ON/OFF** turns it off.
 
 ### Flags and capturing
 Every district has a holographic flag floating over its core, waving in the owner's color, with a capture ring around it.

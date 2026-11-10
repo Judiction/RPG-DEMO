@@ -8,7 +8,7 @@
 //   5. bloom, flying vehicles, holograms, silhouettes of players hidden behind buildings, tags and overlays
 // The game is drawn at low resolution (~640 px wide) and scaled up with crisp pixels.
 
-import { TILE, FACTIONS, WEAPONS, GANG_COLORS, VEHICLES, BRANDS, BAR_ROOM, ITEMS } from './data.js';
+import { TILE, FACTIONS, WEAPONS, GANG_COLORS, VEHICLES, BRANDS, BAR_ROOM, ITEMS, isMech } from './data.js';
 import { T, CHUNK, STATION_COLORS } from './world.js';
 import {
   getTileset, charSprite, armSprite, propSprite, playerSpec, enemySpec, allySpec, followerSpec, civilianSpec, ENEMY_ARM,
@@ -20,6 +20,7 @@ import { hash2 } from './rng.js';
 
 const CH_PX = CHUNK * TILE;
 const STATION_IDX = { arsenal: 0, clinic: 1, locker: 2, vault: 3, garage: 4 };
+const CLOTH = ['#ff3f8e', '#22e5ff', '#ffd23f', '#f2f2f2', '#3ddc84', '#ff8a3d', '#a66bff', '#3a5a8c', '#d01e2e'];
 const STATION_LABEL = { arsenal: 'ARSENAL', clinic: 'CLINICA', locker: 'ARMARIO', vault: 'COFRE', garage: 'GARAGEM' };
 
 export const ownerColorOf = (owner) => (typeof owner === 'string' && owner[0] === 'g' ? GANG_COLORS[Number(owner.slice(1))] || '#fff' : FACTIONS[owner] ? FACTIONS[owner].color : '#888');
@@ -41,7 +42,7 @@ export function createRenderer(canvas) {
   const R = {
     canvas, ctx, vw: 640, vh: 360, scale: 2,
     cam: { x: 0, y: 0 }, shake: 0, world: null, chunks: new Map(),
-    particles: [], texts: [], effects: [], anim: new Map(), ghosts: [], decals: [],
+    particles: [], texts: [], effects: [], anim: new Map(), ghosts: [], decals: [], stains: [], bloodOn: true,
     mouse: { x: 0, y: 0 }, time: 0, specCache: new Map(), flashT: 0, flashCol: '#ff0000', smokeT: 0,
     quality: 'high', bakeBudget: 0, dynLights: [], trans: new Map(),
   };
@@ -60,13 +61,13 @@ export function createRenderer(canvas) {
   R.resize();
 
   R.setWorld = (world) => {
-    R.world = world; R.chunks.clear(); R.anim.clear(); R.particles = []; R.texts = []; R.effects = []; R.decals = [];
+    R.world = world; R.chunks.clear(); R.anim.clear(); R.particles = []; R.texts = []; R.effects = []; R.decals = []; R.stains = [];
     // buildings bucketed by chunk for quick culling
     if (world) {
       R.bgrid = Array.from({ length: world.gridW * world.gridH }, () => []);
       const all = world.buildings.slice();
       for (const Rg of world.regions) for (const w of Rg.compound.walls || []) {
-        all.push({ x: w.x, y: w.y, w: w.w, h: w.h, style: 'cwall', floors: 1, H: Rg.base ? 22 : 13, seed: (w.x * 7919 + w.y * 104729) % 1e9, compound: Rg.id, fr: 0 });
+        all.push({ x: w.x, y: w.y, w: w.w, h: w.h, style: 'cwall', floors: 1, H: Rg.base ? 12 : 10, seed: (w.x * 7919 + w.y * 104729) % 1e9, compound: Rg.id, fr: 0 });
       }
       for (const b of all) {
         const gx = Math.min(world.gridW - 1, Math.floor((b.x + b.w / 2) / CHUNK)), gy = Math.min(world.gridH - 1, Math.floor((b.y + b.h / 2) / CHUNK));
@@ -173,6 +174,7 @@ export function createRenderer(canvas) {
     ctx.translate(-ox, -oy);
     drawWater(world, ox, oy);
     drawDecals(dt);
+    drawStains(dt);
     drawCores(view);
     for (const e of R.effects) if (e.k === 'tele') {
       const p = Math.min(1, e.t / e.d);
@@ -204,6 +206,11 @@ export function createRenderer(canvas) {
       const gi = gy * world.gridW + gx;
       for (const p of world.propGrid[gi]) if (inView(p.x, p.y)) list.push({ y: p.y, p });
       for (const b of world.breakGrid[gi]) if (inView(b.x, b.y)) list.push({ y: b.y, b });
+      if (world.hangGrid) for (const h of world.hangGrid[gi]) {
+        if (!inView(h.x, h.y)) continue;
+        const rs = view.rs[h.region];
+        if (rs && typeof rs.owner === 'string' && !(rs.capture > 0)) list.push({ y: h.y, hg: h, own: rs.owner });
+      }
     }
     for (const p of view.players) if (!p.dead && !p.veh && !(p.bar >= 0)) list.push({ y: p.y, pl: p });
     for (const e of view.enemies) list.push({ y: e.y, en: e });
@@ -232,6 +239,7 @@ export function createRenderer(canvas) {
       else if (d.cv) drawCiv(d.cv, view, dt);
       else if (d.tu) drawTurret(d.tu, view, emq);
       else if (d.ve) drawVehicle(d.ve, view, dt, emq, ox, oy, false);
+      else if (d.hg) drawHangout(d.hg, d.own, dt);
     }
     drawWires(world, ox, oy);
     emitSmoke(world, ox, oy, dt);
@@ -296,7 +304,7 @@ export function createRenderer(canvas) {
     const gy0 = Math.max(0, Math.floor((oy - margin) / CH_PX)), gy1 = Math.min(world.gridH - 1, Math.floor((oy + R.vh + margin) / CH_PX));
     const vis = [];
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) for (const b of R.bgrid[gy * world.gridW + gx]) {
-      const tint = b.compound !== undefined && (b.style === 'cwall' || b.style === 'hq' || b.style === 'shack') ? tintFor(view, b) : null;
+      const tint = b.compound !== undefined && (b.style === 'cwall' || b.style === 'hq' || b.style === 'shack' || b.style === 'garage' || b.style === 'boca' || b.style === 'brick') ? tintFor(view, b) : null;
       const art = buildingArt(b, tint);
       const k = art.k;
       const x0 = b.x * TILE - ox, y0 = b.y * TILE - oy, x1 = x0 + art.W, y1 = y0 + art.D;
@@ -605,6 +613,11 @@ export function createRenderer(canvas) {
     let s;
     if (p.type === 'barrel') s = propSprite('barrel', 0, ((R.time * 8 + p.x) | 0) % 3);
     else if (p.type === 'station') s = propSprite('station', STATION_IDX[p.kind]);
+    else if (p.type === 'paredao') {
+      const beat = (R.time * 124 / 60) % 1;
+      s = propSprite('paredao', 0, beat < 0.22 ? 1 : 0);
+      if (Math.random() < 0.04) R.particles.push({ x: p.x + (Math.random() - 0.5) * 24, y: p.y - 30, vx: (Math.random() - 0.5) * 10, vy: -20, life: 1.1, t: 0, c: ['#ff3fa4', '#22e5ff', '#ffd23f'][(Math.random() * 3) | 0], g: 0, sz: 2, em: true });
+    }
     else s = propSprite(p.type, p.v);
     if (p.type === 'palm' || p.type === 'banana') shadow(p.x + 3, p.y, 7);
     else if (p.type === 'busstop' || p.type === 'dumpster') shadow(p.x, p.y, 12);
@@ -762,6 +775,7 @@ export function createRenderer(canvas) {
     if (p.inv && Math.floor(R.time * 12) % 2) alpha = 0.5;
     const s = drawCharacter(key, p.x, p.y, p.aim, spec, arms, dt, { alpha, moving: isMe ? view.meMoving : undefined, burn: p.burn });
     p._top = s.top;
+    if (p.hp < p.maxHp * 0.35 && !p.cloak) drip(p.x, p.y, dt, false);
     if (p.shield) {
       ctx.globalAlpha = 0.35 + Math.sin(R.time * 8) * 0.1;
       pixCircle(p.x, p.y - 8, 11, '#4fc3ff');
@@ -781,6 +795,7 @@ export function createRenderer(canvas) {
     const flash = e.flash > 0 || (e.windup > 0 && Math.floor(R.time * 16) % 2 === 0);
     const s = drawCharacter(key, e.x, e.y, e.aim, spec, arms, dt, { flash, moving: e.moving, burn: e.burn });
     e._top = s.top;
+    if (e.hp < e.maxHp * 0.35) drip(e.x, e.y, dt, spec.special && spec.special !== 'dog');
     if (e.windup > 0 && Math.floor(R.time * 16) % 2) {
       ctx.globalAlpha = 0.5;
       ctx.fillStyle = '#ff3b5c';
@@ -794,15 +809,24 @@ export function createRenderer(canvas) {
     let spec, weapon;
     if (al.civ) { spec = specFor('Cv' + al.civ + gc, () => civilianSpec(al.civ, gc)); weapon = al.melee ? 'claw' : 'pistol'; }
     else if (al.follow) { spec = specFor('F' + (al.id % 4) + gc + al.tier, () => followerSpec(gc, al.id % 4, al.tier)); weapon = al.tier >= 4 ? 'smg' : 'pistol'; }
+    const lv = al.lvl || 1;
+    if (al.follow && lv > 1) {
+      const base = spec;
+      spec = specFor('L' + lv + JSON.stringify(base), () => Object.assign({}, base, { band: gc }, lv >= 3 ? { armor: Math.max(base.armor || 0, 1), visor: gc } : {}, lv >= 4 ? { armor: Math.max(base.armor || 0, 2), chromeLegs: true } : {}, lv >= 5 ? { armor: 3, kneeGlow: true, chains: true } : {}));
+      if (lv >= 3) weapon = al.melee ? 'blade' : 'smg';
+      if (lv >= 5 && Math.random() < 0.08) R.particles.push({ x: al.x + (Math.random() - 0.5) * 8, y: al.y - Math.random() * 16, vx: 0, vy: -14, life: 0.5, t: 0, c: gc, g: 0, sz: 1, em: true });
+    }
     else { spec = specFor('A' + (al.id % 4) + gc, () => allySpec(gc, al.id % 4)); weapon = 'pistol'; }
     const s = drawCharacter('a' + al.id, al.x, al.y, al.aim, spec, [{ slot: 'R', kind: weapon, color: al.civ ? '#8a8494' : shade(spec.top, -0.1) }], dt, { flash: al.flash > 0, moving: al.moving });
     al._top = s.top;
+    if (al.hp < al.maxHp * 0.35) drip(al.x, al.y, dt, false);
   }
 
   function drawCiv(c, view, dt) {
     const spec = specFor('C' + c.seed, () => civilianSpec(c.seed));
     const s = drawCharacter('c' + c.id, c.x, c.y, c.aim, spec, null, dt, { flash: c.flash, moving: c.moving });
     c._top = s.top;
+    if (c.hpPct < 35) drip(c.x, c.y, dt, false);
     if (c.flee && Math.random() < 0.03) R.text(c.x, c.y - s.top - 4, ['AI!', 'SOCORRO!', 'CORRE!', 'MEU DEUS!'][(Math.random() * 4) | 0], '#ffffff', 0.8, -14);
   }
 
@@ -913,6 +937,16 @@ export function createRenderer(canvas) {
       for (let i = 0; i <= n; i++) {
         const t = i / n;
         ctx.fillRect(Math.round(w.x1 + (w.x2 - w.x1) * t), Math.round(w.y1 + (w.y2 - w.y1) * t + Math.sin(t * Math.PI) * sag), 1, 1);
+      }
+      if (w.cl !== undefined) {
+        // laundry hanging on the line, moving a little in the wind
+        for (let i = 2; i < n - 1; i += 3) {
+          const t = i / n, x = Math.round(w.x1 + (w.x2 - w.x1) * t), y = Math.round(w.y1 + (w.y2 - w.y1) * t + Math.sin(t * Math.PI) * sag);
+          const sw = Math.sin(R.time * 2 + i) > 0.6 ? 1 : 0;
+          ctx.fillStyle = CLOTH[(i + w.cl) % CLOTH.length];
+          ctx.fillRect(x + sw, y + 1, 2, 3 + ((i * 7 + w.cl) % 3));
+        }
+        ctx.fillStyle = '#141018';
       }
     }
   }
@@ -1080,6 +1114,7 @@ export function createRenderer(canvas) {
       if (p.t > p.life) continue;
       p.vy += p.g * dt;
       p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.floor !== undefined && p.vy > 0 && p.y >= p.floor) { addStain(p.x, p.floor, p.sz, p.c, p.oil, Math.random() < 0.45 ? 1 + (Math.random() < 0.3 ? 1 : 0) : 0); continue; }
       if (p.smoke) { p.vx *= 0.99; p.vy *= 0.985; } else { p.vx *= 0.96; p.vy *= p.g ? 1 : 0.96; }
       ctx.fillStyle = p.c;
       ctx.globalAlpha = p.smoke ? Math.min(0.55, (1 - p.t / p.life) * 0.75) : Math.min(1, (1 - p.t / p.life) * 1.5);
@@ -1138,6 +1173,7 @@ export function createRenderer(canvas) {
           const owner = view.players.find((p) => p.id === a.follow);
           ctx.fillStyle = owner ? owner.color || gc : gc;
           ctx.fillRect(Math.round(a.x - 2), Math.round(top - 5), 5, 1); ctx.fillRect(Math.round(a.x - 1), Math.round(top - 4), 3, 1); ctx.fillRect(Math.round(a.x), Math.round(top - 3), 1, 1);
+          if ((a.lvl || 1) > 1) drawText(ctx, '*'.repeat(a.lvl - 1), a.x, top - 12, '#ffd23f');
         }
         if (a.hp < a.maxHp || hostile) hpBar(a.x, top - 1, 12, a.hp / a.maxHp, hostile ? '#ff3b5c' : gc);
       } else if (d.cv) {
@@ -1373,13 +1409,14 @@ export function createRenderer(canvas) {
 
   // hologram labels over the main base buildings (ARSENAL, CLINICA, ARMARIO, COFRE, GARAGEM)
   const labelCache = new Map();
-  const LABEL = { arsenal: 'ARSENAL', clinic: 'CLINICA', locker: 'ARMARIO', vault: 'COFRE', garage: 'GARAGEM' };
-  const LABEL_ICON = { arsenal: 'star', clinic: 'cross', locker: 'box', vault: 'coin', garage: 'gear' };
-  function labelCanvas(kind) {
-    let c = labelCache.get(kind);
+  const LABEL = { arsenal: 'ARSENAL', clinic: 'CLINICA', locker: 'ARMARIO', vault: 'COFRE', garage: 'GARAGEM', boca: 'BOCA' };
+  const LABEL_ICON = { arsenal: 'star', clinic: 'cross', locker: 'box', vault: 'coin', garage: 'gear', boca: 'coin' };
+  function labelCanvas(kind, extra = '') {
+    const ck = kind + extra;
+    let c = labelCache.get(ck);
     if (c) return c;
     const col = STATION_COLORS[kind] || '#ffffff';
-    const t = textSprite(LABEL[kind], col, null);
+    const t = textSprite(LABEL[kind] + extra, col, null);
     const w = t.width * 2 + 22, h = 16;
     c = mk(w, h);
     const g = c.getContext('2d');
@@ -1390,7 +1427,7 @@ export function createRenderer(canvas) {
     g.drawImage(t, 0, 0, t.width, t.height, 14, 3, t.width * 2, t.height * 2);
     g.globalCompositeOperation = 'destination-out';
     for (let y = 1; y < h; y += 2) { g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(0, y, w, 1); }
-    labelCache.set(kind, c);
+    labelCache.set(ck, c);
     return c;
   }
   function drawBaseSigns(view, ox, oy, night) {
@@ -1411,6 +1448,21 @@ export function createRenderer(canvas) {
         ctx.globalAlpha = (0.55 + 0.35 * night) * (Math.random() < 0.03 ? 0.4 : 1);
         ctx.drawImage(c, Math.round(X - c.width / 2), Math.round(Y - c.height / 2 + Math.sin(R.time * 1.7 + wx) * 1.5));
       }
+    }
+    // every boca held by a gang shows its sign (with its upgrade level)
+    for (const Rg of view.world.regions) {
+      const B = Rg.compound.boca;
+      if (!B || !B.b) continue;
+      const rs = view.rs[Rg.id];
+      if (!rs || typeof rs.owner !== 'string') continue;
+      const b = B.b;
+      const wx = (b.x + b.w / 2) * TILE, wy = (b.y + b.h / 2) * TILE;
+      if (wx < ox - 120 || wx > ox + R.vw + 120 || wy < oy - 120 || wy > oy + R.vh + 140) continue;
+      const k = projK((b.H || 20) + 10);
+      const lvl = rs.up ? rs.up.boca || 0 : 0;
+      const c = labelCanvas('boca', lvl ? ' ' + '*'.repeat(lvl) : '');
+      ctx.globalAlpha = (0.6 + 0.35 * night) * (Math.random() < 0.04 ? 0.4 : 1);
+      ctx.drawImage(c, Math.round(scx + (wx - scx) * k - c.width / 2), Math.round(scy + (wy - scy) * k - c.height / 2 + Math.sin(R.time * 2.1 + wx) * 1.5));
     }
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
@@ -1434,6 +1486,10 @@ export function createRenderer(canvas) {
         for (let i = 0; i <= n; i++) {
           const t = i / n, x = x1 + (x2 - x1) * t, y = y1 + (y2 - y1) * t + Math.sin(t * Math.PI) * len * 0.07;
           ctx.fillStyle = '#1a1418'; ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
+          if (w.lights) {
+            if (i % 3 === 0) { const on = (Math.floor(R.time * 3) + i / 3) % 4 !== 0; ctx.fillStyle = on ? ['#ffd88a', '#ff3fa4', '#22e5ff', col][(i / 3) % 4] : '#3a2a20'; ctx.fillRect(Math.round(x), Math.round(y) + 1, 2, 2); }
+            continue;
+          }
           if (i % 4 === 0) { const sway = Math.sin(R.time * 4 + i) > 0 ? 1 : 0; ctx.fillStyle = (i / 4) % 2 ? '#f2f2f2' : col; ctx.fillRect(Math.round(x) - 1, Math.round(y) + 1, 3, 2); ctx.fillRect(Math.round(x) + sway - 0, Math.round(y) + 3, 1, 1); }
         }
       }
@@ -1469,6 +1525,83 @@ export function createRenderer(canvas) {
     for (const e of view.enemies) if (e.faction === 3 && Math.random() < 0.5) out.push({ x: e.x, y: e.y - 14, r: 26, c: (Math.floor(R.time * 6) + e.id) % 2 ? '#ff2a2a' : '#2a4aff', i: 0.6 });
     return out;
   };
+
+
+  // ---------------------------------------------------------------- blood (oil and sparks for machines)
+  const BLOOD = ['#7a0610', '#9a0c18', '#b81624', '#5a040c'];
+  const OIL = ['#121218', '#1e1e28', '#2a2636', '#0e0e0a'];
+  // a hit: a spray of drops flying away from the shot, falling to the floor where they stain
+  R.bleed = (x, y, amount, dir, mech, floorY) => {
+    if (!R.bloodOn) return;
+    const cols = mech ? OIL : BLOOD;
+    const n = Math.min(34, 6 + Math.round(amount * 0.7));
+    for (let i = 0; i < n; i++) {
+      const a = dir !== undefined && dir !== null ? dir + (Math.random() - 0.5) * 1.3 : Math.random() * 6.28;
+      const sp = 25 + Math.random() * 95;
+      R.particles.push({ x: x + (Math.random() - 0.5) * 4, y: y + Math.random() * 6, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp * 0.55 - 35 - Math.random() * 40, life: 1.6, t: 0, c: cols[(Math.random() * cols.length) | 0], g: 300, sz: Math.random() < 0.3 ? 2 : 1, floor: floorY + (Math.random() - 0.5) * 8 + Math.sin(a) * 6, oil: mech });
+    }
+    if (mech) R.burst(x, y + 4, ['#ffd23f', '#ffffff', '#ff8a3d'], 4 + (amount > 20 ? 4 : 0), 90, 0.25, 0, true);
+    else if (amount > 8) addStain(x + (Math.random() - 0.5) * 8, floorY + (Math.random() - 0.5) * 4, 3, cols[0], false, 2 + Math.min(5, amount / 8));
+  };
+  // a body: a pool that spreads over a couple of seconds
+  R.pool = (x, y, size, mech) => {
+    if (!R.bloodOn) return;
+    R.stains.push({ x, y, r: 0, rmax: size, c: mech ? OIL[1] : BLOOD[1], c2: mech ? '#3a3448' : '#c41e2a', t: 0, life: 32 + Math.random() * 4, pool: true, oil: mech });
+    for (let i = 0; i < 6; i++) { const a = Math.random() * 6.28, d = size * (0.8 + Math.random() * 0.9); addStain(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.6, 1 + (Math.random() < 0.4 ? 1 : 0), mech ? OIL[0] : BLOOD[0], mech); }
+    R.bleed(x, y - 10, 30, null, mech, y);
+  };
+  function addStain(x, y, sz, c, oil, splat = 0) {
+    if (!R.bloodOn) return;
+    R.stains.push({ x: Math.round(x), y: Math.round(y), sz, c, t: 0, life: 28 + Math.random() * 6, splat, seed: (Math.random() * 1000) | 0, oil });
+    if (R.stains.length > 700) R.stains.splice(0, R.stains.length - 700);
+  }
+  function drip(x, y, dt, mech) {
+    if (R.bloodOn && Math.random() < dt * 2.5) addStain(x + (Math.random() - 0.5) * 5, y + (Math.random() - 0.5) * 2, 1, mech ? OIL[0] : BLOOD[(Math.random() * 3) | 0], mech);
+  }
+  function drawStains(dt) {
+    if (!R.stains.length) return;
+    const keep = [];
+    const x0 = R.ox - 30, x1 = R.ox + R.vw + 30, y0 = R.oy - 30, y1 = R.oy + R.vh + 30;
+    for (const st of R.stains) {
+      st.t += dt;
+      if (st.t >= st.life) continue;
+      keep.push(st);
+      if (st.x < x0 || st.x > x1 || st.y < y0 || st.y > y1) continue;
+      // fresh blood is bright and wet; it darkens, then fades away in the last seconds
+      const fade = Math.min(1, (st.life - st.t) / 8);
+      ctx.globalAlpha = 0.9 * fade;
+      if (st.pool) {
+        st.r = Math.min(st.rmax, st.rmax * Math.min(1, st.t / 2.2) ** 0.6);
+        ctx.fillStyle = st.c;
+        pixCircleFill(st.x, st.y, st.r, 0.55);
+        ctx.fillStyle = st.oil ? '#3a3448' : '#5a040c';
+        pixCircle(st.x, st.y, st.r, ctx.fillStyle, 0.55);
+        if (st.t < 6) { ctx.fillStyle = st.c2; ctx.globalAlpha = 0.5 * (1 - st.t / 6) * fade; ctx.fillRect(Math.round(st.x - st.r * 0.3), Math.round(st.y - st.r * 0.2), 2, 1); }
+      } else {
+        ctx.fillStyle = st.c;
+        ctx.fillRect(st.x, st.y, st.sz, Math.max(1, st.sz - (st.seed % 2)));
+        if (st.splat) {
+          for (let i = 0; i < 3 + st.splat; i++) { const a = (st.seed + i * 2.3) % 6.28, d = 1 + ((st.seed * (i + 3)) % (st.splat * 2 + 1)); ctx.fillRect(Math.round(st.x + Math.cos(a) * d), Math.round(st.y + Math.sin(a) * d * 0.6), 1, 1); }
+          ctx.fillRect(st.x - 1, st.y - 1, st.splat, st.splat - 1 || 1);
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+    R.stains = keep;
+  }
+
+  // ---------------------------------------------------------------- gang members hanging out in their turf
+  function drawHangout(h, owner, dt) {
+    const gc = GANG_COLORS[Number(owner.slice(1))] || '#ff3f8e';
+    const spec = specFor('H' + h.seed + gc, () => Object.assign(civilianSpec(h.seed, gc), { band: gc }));
+    if (h.kind === 'dance') { drawDancer('h' + h.seed, h.x, h.y, spec, h.seed % 3, dt, h.seed % 7); return; }
+    if (h.kind === 'sit') { const s = charSprite(spec, 0, 0); shadow(h.x, h.y + 2, 4); ctx.drawImage(s, Math.round(h.x - s.ax), Math.round(h.y - s.ay + 3)); return; }
+    // lean / guard: stands around, looks around now and then
+    const look = Math.floor(R.time * 0.4 + h.seed) % 4;
+    const aim = [Math.PI / 2, 0, Math.PI, Math.PI / 2][look];
+    drawCharacter('h' + h.seed, h.x, h.y, aim, spec, h.kind === 'guard' ? [{ slot: 'R', kind: 'smg', color: '#3a3646' }] : null, dt, { moving: false });
+    if (h.kind === 'lean' && Math.random() < 0.01) R.smoke(h.x + 4, h.y - 16, '#c8c0d0', 1, -10, 1.2);
+  }
 
   // ---------------------------------------------------------------- dancing (emote and the bar crowd)
   // style 0: passinho (fast footwork), 1: crip walk (side to side), 2: rebolado (shake it)
@@ -1655,6 +1788,31 @@ export function createRenderer(canvas) {
 }
 
 // ------------------------------------------------------------------ chunk rendering (ground only)
+// gang yards: patched brick pavers, cracked cement and dirt, puddles, spray paint on the floor
+function yardTile(P, px, py, tx, ty, h, seed) {
+  const k = hash2(tx >> 1, ty >> 1, seed ^ 0x77a1);
+  if (k < 0.6) {
+    P(px, py, 16, 16, '#5a3a30');
+    for (let y = 0; y < 16; y += 4) for (let x = (y / 4) % 2 ? -4 : 0; x < 16; x += 8) {
+      const v = hash2(tx * 16 + x, ty * 16 + y, seed);
+      P(px + Math.max(0, x), py + y, Math.min(7, 16 - Math.max(0, x)) - (x < 0 ? -x - 1 : 0), 3, v < 0.1 ? '#4a2a22' : v < 0.5 ? '#8a4a36' : v < 0.85 ? '#9a5640' : '#7a4030');
+    }
+  } else if (k < 0.8) {
+    P(px, py, 16, 16, '#7a6c64');
+    for (let i = 0; i < 10; i++) { const v = hash2(tx * 31 + i, ty * 17, seed); P(px + ((v * 16) | 0), py + ((v * 977 % 1) * 16 | 0), 1, 1, v < 0.5 ? '#6a5c54' : '#8a7c72'); }
+    if (h < 0.3) { P(px + 3, py + 5, 6, 1, '#5a4c44'); P(px + 8, py + 6, 1, 4, '#5a4c44'); }
+  } else if (k < 0.93) {
+    P(px, py, 16, 16, '#6a5038');
+    for (let i = 0; i < 9; i++) { const v = hash2(tx * 13 + i, ty * 29, seed ^ 5); P(px + ((v * 16) | 0), py + ((v * 613 % 1) * 16 | 0), 1, 1, v < 0.5 ? '#5a4230' : '#8a7058'); }
+  } else {
+    P(px, py, 16, 16, '#6e6466');
+    if (h < 0.5) P(px + 4, py + 6, 7, 3, 'rgba(20,16,24,0.45)');
+  }
+  P(px, py + 15, 16, 1, 'rgba(0,0,0,0.12)');
+  if (h > 0.992) { const c = ['#ff3f8e', '#22e5ff', '#ffd23f', '#f2f2f2'][(h * 1000 | 0) % 4]; P(px + 3, py + 4, 1, 7, c); P(px + 3, py + 4, 6, 1, c); P(px + 8, py + 4, 1, 4, c); P(px + 5, py + 8, 4, 1, c); P(px + 11, py + 6, 1, 6, c); }
+  else if (h > 0.94) { P(px + 3, py + 7, 9, 4, '#2a3a5a'); P(px + 4, py + 8, 3, 1, '#5a7ab0'); }
+}
+
 // Returns { c: ground canvas, e: emissive ground canvas (or null) }
 function renderChunk(world, cx, cy) {
   const WW = world.W, HH = world.H;
@@ -1668,6 +1826,10 @@ function renderChunk(world, cx, cy) {
   const tAt = (x, y) => (x < 0 || y < 0 || x >= WW || y >= HH ? T.WATER : world.tiles[y * WW + x]);
   const P = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
   const EM = (x, y, w, h, col) => { P(x, y, w, h, col); ge.fillStyle = col; ge.fillRect(x, y, w, h); hasE = true; };
+  if (!world.cmask) {
+    world.cmask = new Uint8Array(WW * HH);
+    for (const Rg of world.regions) { const C = Rg.compound; for (let y = C.y; y < C.y + C.h; y++) for (let x = C.x; x < C.x + C.w; x++) world.cmask[y * WW + x] = 1; }
+  }
   for (let ty = y0; ty < y0 + CHUNK && ty < HH; ty++) for (let tx = x0; tx < x0 + CHUNK && tx < WW; tx++) {
     const t = world.tiles[ty * WW + tx];
     const px = (tx - x0) * TILE, py = (ty - y0) * TILE;
@@ -1677,6 +1839,7 @@ function renderChunk(world, cx, cy) {
     if (t === T.ROAD) v = h < 0.8 ? 0 : (((h - 0.8) / 0.2) * vars.length) | 0;
     if (t === T.BUILD || t === T.WALL) { P(px, py, 16, 16, '#1a1622'); continue; }
     if (t === T.WALL) g.drawImage(set[T.CONCRETE][0], px, py);
+    else if ((t === T.CONCRETE || t === T.PAD) && world.cmask[ty * WW + tx]) { yardTile(P, px, py, tx, ty, h, world.seed); if (t === T.PAD) g.drawImage(vars[0], px, py); }
     else g.drawImage(vars[Math.min(vars.length - 1, v)], px, py);
     // contact shadow at the foot of buildings
     if (t !== T.WATER) {
