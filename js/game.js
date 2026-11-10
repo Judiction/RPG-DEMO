@@ -11,7 +11,7 @@ import {
   MAX_WEAPON_LVL, WEAPON_IDS, GANG_COLORS, GANG_DEFAULT_NAMES, NAME_COLORS, FOLLOWER_MAX, VEHICLES, VEHICLE_IDS,
   BATTERY_PRICE, BATTERY_CHARGE, MAX_VEHICLES, VEHICLE_RESPAWN, TURRETS, TURRET_IDS, TURRET_MAX_MK, turretMult,
   turretUpgradePrice, TURRET_REPAIR, COMPOUND_UPS, RAID_WARN, RAID_INTERVAL, RAID_SIZE, PVP_WIN_SHARE, BREAK_INFO,
-  MAP_SIZES,
+  MAP_SIZES, RECOIL, EXPLOSION_PUSH, CIV,
 } from './data.js';
 import { moveBox, lineOfSight, rayCast, bfsField, fieldDir, regionAt, opaqueAt, nearestOpen, boxHits } from './world.js';
 
@@ -50,6 +50,7 @@ export function createGame(world, opts = {}) {
     maxTier: Math.max(...world.regions.map((r) => r.tier)),
     rosterVer: 1, regionVer: 1,
     brk: new Map(), brokeVer: 1, vehQueue: [],
+    civs: new Map(), civT: 0, danger: [], rep: {}, repT: 0,
   };
   for (let f = 0; f < 3; f++) if (world.hqs[f] < 0) game.defeated[f] = true;
   for (const R of world.regions) {
@@ -104,6 +105,7 @@ function loadSave(game, s) {
   game.raidT = s.raidT ?? 240;
   Object.assign(game.stats, s.stats || {});
   game.saved = s.chars || {};
+  game.rep = s.rep || {};
   if (s.v === 1) {
     // first version: a single gang, owner 'g'
     let idx = GANG_COLORS.indexOf(s.gangColor);
@@ -159,14 +161,14 @@ export function serialize(game) {
       up: isGang(r.owner) ? r.up : undefined, sl: isGang(r.owner) ? r.slots.map((x) => (x ? [x.type, x.mk] : null)) : undefined,
     })),
     vehicles: [...game.vehicles.values()].map((v) => ({ type: v.type, x: Math.round(v.x), y: Math.round(v.y), hp: Math.round(v.hp), charge: Math.round(v.charge), team: v.team })),
-    chars, savedAt: Date.now(),
+    chars, rep: game.rep, savedAt: Date.now(),
     gangName: main ? main.name : '', gangColor: main ? main.color : GANG_COLORS[0],
     owned: main ? ownedCount(game, main.id) : 0, total: game.world.regions.length,
   };
 }
 
 function charData(game, p) {
-  const followers = [...game.allies.values()].filter((a) => a.follow === p.id).map((a) => ({ tier: a.tier, hpf: +(a.hp / a.maxHp).toFixed(2) }));
+  const followers = [...game.allies.values()].filter((a) => a.follow === p.id).map((a) => ({ tier: a.tier, hpf: +(a.hp / a.maxHp).toFixed(2), civ: a.civ || 0, melee: a.melee }));
   return {
     name: p.name, look: p.look, color: p.color, gang: gangIdx(p.gang), level: p.level, xp: p.xp, cash: Math.floor(p.cash),
     armory: p.armory, equip: p.equip, mods: p.mods, kills: p.kills, deaths: p.deaths, pvpKills: p.pvpKills,
@@ -256,7 +258,7 @@ export function addPlayer(game, o) {
   p.x = sp.x + (rand() - 0.5) * 30; p.y = sp.y + 2 * TILE;
   game.players.set(p.id, p);
   if (saved && saved.followers) for (const f of saved.followers.slice(0, FOLLOWER_MAX)) {
-    const al = spawnFollower(game, p, f.tier || 1);
+    const al = spawnFollower(game, p, f.tier || 1, { civ: f.civ, melee: f.melee });
     al.hp = Math.max(1, al.maxHp * (f.hpf ?? 1));
   }
   game.rosterVer++;
@@ -364,6 +366,7 @@ export function handleAction(game, id, a) {
   if (!p || !a) return;
   const gang = game.gangs.get(p.gang);
   if (a.t === 'veh') return toggleVehicle(game, p);
+  if (a.t === 'recruit') return recruitCiv(game, p);
   if (a.t === 'wp') {
     p.wp = a.clear || !Number.isFinite(a.x) || !Number.isFinite(a.y) ? null : { x: Math.round(a.x), y: Math.round(a.y) };
     game.rosterVer++;
@@ -545,13 +548,17 @@ function radiusOf(o) {
 }
 
 // Calls fn(target) for everything hostile to `team` that can be damaged.
-function forTargets(game, team, fn) {
+function forTargets(game, team, fn, civs = false) {
+  if (civs) for (const c of game.civs.values()) fn(c);
   if (team !== 'e') for (const e of game.enemies.values()) fn(e);
   for (const p of game.players.values()) if (p.gang !== team && !p.dead && !p.veh) fn(p);
   for (const a of game.allies.values()) if (a.team !== team && !a.hidden) fn(a);
   for (const t of game.turrets.values()) if (t.team !== team && t.deadT <= 0) fn(t);
   for (const v of game.vehicles.values()) if (v.team && v.team !== team && v.seats.some(Boolean)) fn(v);
 }
+
+// like forTargets, but also civilians (stray bullets and blasts hurt them; nobody aims at them)
+const forHits = (game, team, fn) => forTargets(game, team, fn, true);
 
 function alive(game, o) {
   if (!o) return false;
@@ -566,9 +573,10 @@ function alive(game, o) {
 function damage(game, o, dmg, src, kx = 0, ky = 0) {
   if (o.k === 'e') damageEnemy(game, o, dmg, src, kx, ky);
   else if (o.k === 'p') hurtPlayer(game, o, dmg, src, kx, ky);
-  else if (o.k === 'a') hurtAlly(game, o, dmg, src);
+  else if (o.k === 'a') hurtAlly(game, o, dmg, src, kx, ky);
   else if (o.k === 't') hurtTurret(game, o, dmg, src);
   else if (o.k === 'v') hurtVehicle(game, o, dmg, src);
+  else if (o.k === 'c') hurtCiv(game, o, dmg, src, kx, ky);
 }
 
 function rollTier(game, R, bonus = 0) {
@@ -661,7 +669,8 @@ function applyAllyStats(game, al) {
   const gang = game.gangs.get(al.team);
   const L = gang ? gang.upgrades.training || 0 : 0;
   const frac = al.maxHp ? al.hp / al.maxHp : 1;
-  if (al.follow) { al.maxHp = 90 + 25 * al.tier + 30 * L; al.dmg = 7 + 2.5 * al.tier + 4 * L; }
+  if (al.civ) { al.maxHp = 70 + 30 * L; al.dmg = (al.melee ? 12 : 6) + 4 * L; }
+  else if (al.follow) { al.maxHp = 90 + 25 * al.tier + 30 * L; al.dmg = 7 + 2.5 * al.tier + 4 * L; }
   else { al.maxHp = 80 + 55 * L; al.dmg = 7 + 5 * L; }
   al.hp = al.maxHp * frac;
 }
@@ -675,7 +684,7 @@ function spawnAlly(game, region) {
   }
   const al = {
     id: game.nextId++, k: 'a', region, team: game.rs[region].owner, x, y, px: x, py: y, hp: 1, maxHp: 1, dmg: 7, speed: 62, r: 4.5,
-    target: null, atkCd: rand(), thinkT: rand() * 0.3, aim: rand() * 6.28, flash: 0, mvx: 0, mvy: 0, moving: false, follow: null, tier: 1,
+    target: null, atkCd: rand(), thinkT: rand() * 0.3, aim: rand() * 6.28, flash: 0, mvx: 0, mvy: 0, moving: false, follow: null, tier: 1, kx: 0, ky: 0, svx: 0, svy: 0,
   };
   applyAllyStats(game, al);
   al.hp = al.maxHp;
@@ -683,12 +692,14 @@ function spawnAlly(game, region) {
   return al;
 }
 
-function spawnFollower(game, p, tier) {
+function spawnFollower(game, p, tier, extra = {}) {
   const al = {
     id: game.nextId++, k: 'a', region: -1, team: p.gang, x: p.x + (rand() - 0.5) * 16, y: p.y + (rand() - 0.5) * 16, px: p.x, py: p.y,
     hp: 1, maxHp: 1, dmg: 7, speed: 70, r: 4.5, target: null, atkCd: rand(), thinkT: rand() * 0.3, aim: rand() * 6.28, flash: 0,
-    mvx: 0, mvy: 0, moving: false, follow: p.id, tier: Math.max(1, Math.min(6, tier)), hidden: !!p.veh,
+    mvx: 0, mvy: 0, moving: false, follow: p.id, tier: Math.max(1, Math.min(6, tier)), hidden: !!p.veh, kx: 0, ky: 0, svx: 0, svy: 0,
+    civ: extra.civ || 0, melee: !!extra.melee,
   };
+  if (extra.x !== undefined) { al.x = extra.x; al.y = extra.y; }
   const o = nearestOpen(game.world, al.x, al.y, 4); al.x = o.x; al.y = o.y;
   applyAllyStats(game, al);
   al.hp = al.maxHp;
@@ -805,7 +816,7 @@ function wreckVehicle(game, v) {
   }
   game.rosterVer++;
   // the blast hurts nearby hostiles, never the riders
-  forTargets(game, team, (o) => { const d = Math.sqrt(dist2(v.x, v.y, o.x, bodyY(o))); if (d < 46 + radiusOf(o)) damage(game, o, 40, { k: 'x', team }); });
+  forHits(game, team, (o) => { const d = Math.sqrt(dist2(v.x, v.y, o.x, bodyY(o))); if (d < 46 + radiusOf(o)) damage(game, o, 40, { k: 'x', team }); });
   game.vehQueue.push({ t: VEHICLE_RESPAWN, type: v.type });
 }
 
@@ -926,7 +937,7 @@ function updateTurret(game, t, dt) {
     }
   } else if (t.type === 'flamer') {
     emit(game, { t: 'flame', o: 't' + t.id, x: Math.round(ox), y: Math.round(oy), a: +t.aim.toFixed(2), r: T.range });
-    forTargets(game, t.team, (q) => {
+    forHits(game, t.team, (q) => {
       const dd = Math.sqrt(dist2(ox, oy, q.x, bodyY(q)));
       if (dd > T.range + radiusOf(q) || angDiff(Math.atan2(bodyY(q) - oy, q.x - ox), t.aim) > 0.45) return;
       damage(game, q, dmg, src);
@@ -936,7 +947,7 @@ function updateTurret(game, t, dt) {
     const len = rayCast(game.world, ox, oy, t.aim, T.range);
     const x2 = ox + Math.cos(t.aim) * len, y2 = oy + Math.sin(t.aim) * len;
     emit(game, { t: 'beam', o: 't' + t.id, x: Math.round(ox), y: Math.round(oy), x2: Math.round(x2), y2: Math.round(y2), c: '#22e5ff' });
-    forTargets(game, t.team, (q) => { if (segDist2(q.x, bodyY(q), ox, oy, x2, y2) < (radiusOf(q) + 4) ** 2) damage(game, q, dmg, src); });
+    forHits(game, t.team, (q) => { if (segDist2(q.x, bodyY(q), ox, oy, x2, y2) < (radiusOf(q) + 4) ** 2) damage(game, q, dmg, src); });
   }
 }
 
@@ -948,6 +959,7 @@ function spawnProj(game, o) {
     homing: o.homing || 0, knock: o.knock || 0, crit: !!o.crit,
   };
   game.projectiles.push(p);
+  markDanger(game, o.x, o.y);
   emit(game, { t: 'shot', i: p.id, x: Math.round(p.x), y: Math.round(p.y), a: +o.a.toFixed(3), s: o.speed, l: o.life, k: o.kind, tm: o.team, o: p.owner });
   return p;
 }
@@ -1027,7 +1039,9 @@ function spawnPickup(game, type, x, y, amount) {
 
 function hurtPlayer(game, p, dmg, src, kx = 0, ky = 0) {
   if (p.veh) { const v = game.vehicles.get(p.veh); if (v) hurtVehicle(game, v, dmg, src); return; }
-  if (p.dead || p.invulnT > 0) return;
+  if (p.dead) return;
+  if ((kx || ky) && Math.hypot(kx, ky) > 50) emit(game, { t: 'knock', id: p.id, x: kx * 0.6, y: ky * 0.6, to: p.id });
+  if (p.invulnT > 0) return;
   dmg *= 1 - p.armorRed;
   if (p.shieldHp > 0) {
     const a = Math.min(p.shieldHp, dmg);
@@ -1037,7 +1051,6 @@ function hurtPlayer(game, p, dmg, src, kx = 0, ky = 0) {
   if (dmg <= 0) return;
   p.hp -= dmg;
   p.lastHurt = game.time;
-  if ((kx || ky) && src && src.k === 'p') emit(game, { t: 'knock', id: p.id, x: kx * 0.15, y: ky * 0.15 });
   emit(game, { t: 'dmg', x: p.x, y: p.y - 22, v: Math.round(dmg), c: 'player' });
   emit(game, { t: 'hurt', id: p.id });
   if (p.hp <= 0) killPlayer(game, p, src);
@@ -1065,7 +1078,8 @@ function killPlayer(game, p, src) {
   p.dirty = true;
 }
 
-function hurtAlly(game, al, dmg, src) {
+function hurtAlly(game, al, dmg, src, kx = 0, ky = 0) {
+  if (kx || ky) { al.kx = (al.kx || 0) + kx * 0.7; al.ky = (al.ky || 0) + ky * 0.7; }
   if (al.region >= 0 && game.rs[al.region]) dmg *= 1 - 0.12 * (game.rs[al.region].up.walls || 0);
   al.hp -= dmg;
   al.flash = 0.12;
@@ -1090,14 +1104,26 @@ function hurtAlly(game, al, dmg, src) {
 // x, y, radius, damage. Hurts everything hostile to `team` (and breakables).
 function explode(game, x, y, r, dmg, team, src) {
   emit(game, { t: 'boom', x, y, r });
-  forTargets(game, team, (o) => {
+  markDanger(game, x, y, 2);
+  forHits(game, team, (o) => {
     const d = Math.sqrt(dist2(x, y, o.x, bodyY(o)));
     if (d < r + radiusOf(o)) {
       const f = 1 - 0.5 * Math.min(1, d / r);
       const a = Math.atan2(bodyY(o) - y, o.x - x);
-      damage(game, o, dmg * f, src, Math.cos(a) * 160, Math.sin(a) * 160);
+      damage(game, o, dmg * f, src, Math.cos(a) * EXPLOSION_PUSH * f, Math.sin(a) * EXPLOSION_PUSH * f);
     }
   });
+  // the blast also shoves friendly players and crew around (no damage)
+  for (const p of game.players.values()) {
+    if (p.dead || p.veh || p.gang !== team) continue;
+    const d = Math.sqrt(dist2(x, y, p.x, p.y - 6));
+    if (d < r * 1.3) { const a = Math.atan2(p.y - 6 - y, p.x - x); const f = 0.55 * (1 - d / (r * 1.3)); emit(game, { t: 'knock', id: p.id, x: Math.cos(a) * EXPLOSION_PUSH * f, y: Math.sin(a) * EXPLOSION_PUSH * f, to: p.id }); }
+  }
+  for (const al of game.allies.values()) {
+    if (al.team !== team || al.hidden) continue;
+    const d = Math.sqrt(dist2(x, y, al.x, al.y - 6));
+    if (d < r * 1.3) { const a = Math.atan2(al.y - 6 - y, al.x - x); const f = 0.5 * (1 - d / (r * 1.3)); al.kx += Math.cos(a) * EXPLOSION_PUSH * f; al.ky += Math.sin(a) * EXPLOSION_PUSH * f; }
+  }
   hitBreakables(game, x, y, r, dmg, src);
 }
 
@@ -1155,10 +1181,11 @@ function fireWeapon(game, p, slot) {
   const src = { k: 'p', id: p.id, team: p.gang };
   const dmg = Wp.dmg * mult;
   const T = p.gang;
+  if (p.id === 'host' && RECOIL[wid] && !p.veh) emit(game, { t: 'kick', id: p.id, a, k: RECOIL[wid], to: 'host' });
   if (Wp.kind === 'melee') {
     emit(game, { t: 'swing', o: 'p' + p.id, s: slot, a: +a.toFixed(2), k: wid });
     const cy = p.y - 6 - lift;
-    forTargets(game, T, (e) => {
+    forHits(game, T, (e) => {
       const d = Math.sqrt(dist2(p.x, cy, e.x, bodyY(e)));
       if (d > Wp.range + radiusOf(e) + 2) return;
       const ea = Math.atan2(bodyY(e) - cy, e.x - p.x);
@@ -1174,7 +1201,7 @@ function fireWeapon(game, p, slot) {
     }
   } else if (Wp.kind === 'flame') {
     emit(game, { t: 'flame', o: 'p' + p.id, x: Math.round(ox), y: Math.round(oy), a: +a.toFixed(2), r: Wp.range });
-    forTargets(game, T, (e) => {
+    forHits(game, T, (e) => {
       const d = Math.sqrt(dist2(ox, oy, e.x, bodyY(e)));
       if (d > Wp.range + radiusOf(e) || angDiff(Math.atan2(bodyY(e) - oy, e.x - ox), a) > Wp.arc / 2 + 0.1) return;
       damage(game, e, dmg, src);
@@ -1185,12 +1212,12 @@ function fireWeapon(game, p, slot) {
     const len = rayCast(game.world, ox, oy, a, Wp.range);
     const x2 = ox + Math.cos(a) * len, y2 = oy + Math.sin(a) * len;
     emit(game, { t: 'whip', o: 'p' + p.id, x: Math.round(ox), y: Math.round(oy), x2: Math.round(x2), y2: Math.round(y2), s: slot });
-    forTargets(game, T, (e) => { if (segDist2(e.x, bodyY(e), ox, oy, x2, y2) < (radiusOf(e) + 5) ** 2) damage(game, e, dmg, src, Math.cos(a) * 60, Math.sin(a) * 60); });
+    forHits(game, T, (e) => { if (segDist2(e.x, bodyY(e), ox, oy, x2, y2) < (radiusOf(e) + 5) ** 2) damage(game, e, dmg, src, Math.cos(a) * 60, Math.sin(a) * 60); });
     hitBreakables(game, x2, y2, 10, dmg, src);
   } else if (Wp.kind === 'slam') {
     const cx = p.x + Math.cos(a) * 16, cy = p.y - 4 - lift + Math.sin(a) * 16;
     emit(game, { t: 'slam', o: 'p' + p.id, x: Math.round(cx), y: Math.round(cy), r: Wp.radius, s: slot, a: +a.toFixed(2) });
-    forTargets(game, T, (e) => {
+    forHits(game, T, (e) => {
       const d = Math.sqrt(dist2(cx, cy, e.x, bodyY(e)));
       if (d < Wp.radius + radiusOf(e)) { const ka = Math.atan2(bodyY(e) - cy, e.x - cx); damage(game, e, dmg, src, Math.cos(ka) * Wp.knock, Math.sin(ka) * Wp.knock); }
     });
@@ -1201,7 +1228,7 @@ function fireWeapon(game, p, slot) {
     const len = rayCast(game.world, ox, oy, a, Wp.range);
     const x2 = ox + Math.cos(a) * len, y2 = oy + Math.sin(a) * len;
     emit(game, { t: 'beam', o: 'p' + p.id, x: Math.round(ox), y: Math.round(oy), x2: Math.round(x2), y2: Math.round(y2), c: '#22e5ff' });
-    forTargets(game, T, (e) => { if (segDist2(e.x, bodyY(e), ox, oy, x2, y2) < (radiusOf(e) + 4) ** 2) damage(game, e, dmg, src, Math.cos(a) * 40, Math.sin(a) * 40); });
+    forHits(game, T, (e) => { if (segDist2(e.x, bodyY(e), ox, oy, x2, y2) < (radiusOf(e) + 4) ** 2) damage(game, e, dmg, src, Math.cos(a) * 40, Math.sin(a) * 40); });
     for (let d = 20; d < len; d += 20) hitBreakables(game, ox + Math.cos(a) * d, oy + Math.sin(a) * d, 8, dmg, src);
   }
 }
@@ -1215,6 +1242,7 @@ export function step(game, dt) {
   for (const e of [...game.enemies.values()]) updateEnemy(game, e, dt);
   for (const al of [...game.allies.values()]) updateAlly(game, al, dt);
   for (const t of game.turrets.values()) updateTurret(game, t, dt);
+  updateCivs(game, dt);
   updateProjectiles(game, dt);
   updatePickups(game, dt);
   game.regionT += dt;
@@ -1326,9 +1354,11 @@ function updateEnemy(game, e, dt) {
   }
   e.thinkT -= dt;
   if (e.thinkT <= 0) { e.thinkT = 0.15 + rand() * 0.1; thinkEnemy(game, e); }
-  if (e.mvx || e.mvy) {
+  const ek = Math.min(1, dt * (8 / Math.max(1, e.bulk)));
+  e.svx = (e.svx || 0) + (e.mvx - (e.svx || 0)) * ek; e.svy = (e.svy || 0) + (e.mvy - (e.svy || 0)) * ek;
+  if (Math.abs(e.svx) + Math.abs(e.svy) > 0.02) {
     const ox = e.x, oy = e.y;
-    moveBox(world, e, e.mvx * e.speed * dt, e.mvy * e.speed * dt, e.r);
+    moveBox(world, e, e.svx * e.speed * dt, e.svy * e.speed * dt, e.r);
     e.moving = Math.abs(e.x - ox) + Math.abs(e.y - oy) > 0.05;
     if (!e.moving) e.stuck = (e.stuck || 0) + dt;
     else e.stuck = 0;
@@ -1439,9 +1469,9 @@ function executeAttack(game, e) {
     case 'melee': {
       emit(game, { t: 'swing', o: 'e' + e.id, s: 'R', a: +a.toFixed(2), k: 'claw' });
       const reach = A.range + e.r + 8;
-      forTargets(game, 'e', (o) => {
+      forHits(game, 'e', (o) => {
         const d = Math.sqrt(dist2(e.x, by, o.x, bodyY(o)));
-        if (d < reach + radiusOf(o) - 4 && (d < 8 || angDiff(Math.atan2(bodyY(o) - by, o.x - e.x), a) < 1.2)) damage(game, o, e.dmg, src);
+        if (d < reach + radiusOf(o) - 4 && (d < 8 || angDiff(Math.atan2(bodyY(o) - by, o.x - e.x), a) < 1.2)) damage(game, o, e.dmg, src, Math.cos(a) * (60 + e.bulk * 40), Math.sin(a) * (60 + e.bulk * 40));
       });
       break;
     }
@@ -1457,7 +1487,7 @@ function executeAttack(game, e) {
     case 'slam': {
       const r = A.radius * (e.bulk / 1.4);
       emit(game, { t: 'slam', o: 'e' + e.id, x: Math.round(e.x), y: Math.round(e.y), r });
-      forTargets(game, 'e', (o) => { if (dist2(e.x, e.y, o.x, o.y) < (r + radiusOf(o)) ** 2) damage(game, o, e.dmg * 1.3, src); });
+      forHits(game, 'e', (o) => { if (dist2(e.x, e.y, o.x, o.y) < (r + radiusOf(o)) ** 2) { const ka = Math.atan2(o.y - e.y, o.x - e.x); damage(game, o, e.dmg * 1.3, src, Math.cos(ka) * 220, Math.sin(ka) * 220); } });
       hitBreakables(game, e.x, e.y, r, e.dmg, src);
       break;
     }
@@ -1488,7 +1518,7 @@ function bossAttack(game, e, a, src, by) {
   } else {
     const r = 56;
     emit(game, { t: 'slam', o: 'e' + e.id, x: Math.round(e.x), y: Math.round(e.y), r });
-    forTargets(game, 'e', (o) => { if (dist2(e.x, e.y, o.x, o.y) < (r + radiusOf(o)) ** 2) damage(game, o, e.dmg * (o.k === 'p' ? 1.5 : 1), src); });
+    forHits(game, 'e', (o) => { if (dist2(e.x, e.y, o.x, o.y) < (r + radiusOf(o)) ** 2) damage(game, o, e.dmg * (o.k === 'p' ? 1.5 : 1), src); });
   }
 }
 
@@ -1524,8 +1554,15 @@ function updateAlly(game, al, dt) {
       const d = Math.sqrt(dist2(al.x, al.y, tgt.x, tgt.y)) || 1;
       al.aim = Math.atan2(bodyY(tgt) - (al.y - 6), tgt.x - al.x);
       const los = lineOfSight(world, al.x, al.y - 6, tgt.x, bodyY(tgt));
-      if (d > 90 || !los) { mx = (tgt.x - al.x) / d; my = (tgt.y - al.y) / d; }
-      if (los && al.atkCd <= 0 && d < 150) {
+      if (al.melee) {
+        if (d > 12) { mx = (tgt.x - al.x) / d; my = (tgt.y - al.y) / d; }
+        if (d < 18 + radiusOf(tgt) && al.atkCd <= 0) {
+          al.atkCd = 0.65 + rand() * 0.2;
+          emit(game, { t: 'swing', o: 'a' + al.id, s: 'R', a: +al.aim.toFixed(2), k: 'claw' });
+          damage(game, tgt, al.dmg, { k: 'a', id: al.id, team: al.team }, Math.cos(al.aim) * 90, Math.sin(al.aim) * 90);
+        }
+      } else if (d > 90 || !los) { mx = (tgt.x - al.x) / d; my = (tgt.y - al.y) / d; }
+      if (!al.melee && los && al.atkCd <= 0 && d < 150) {
         al.atkCd = (al.follow ? 0.7 : 0.9) + rand() * 0.4;
         spawnProj(game, { x: al.x + Math.cos(al.aim) * 6, y: al.y - 8, a: al.aim + (rand() - 0.5) * 0.1, speed: 260, life: 0.7, dmg: al.dmg, team: al.team, kind: al.follow ? 'smart' : 'pulse', src: { k: 'a', id: al.id, team: al.team } });
       }
@@ -1549,10 +1586,13 @@ function updateAlly(game, al, dt) {
     if (l > 1) { mx /= l; my /= l; }
     al.mvx = mx; al.mvy = my;
   }
-  if (al.mvx || al.mvy) {
+  if (Math.abs(al.kx) + Math.abs(al.ky) > 1) { moveBox(world, al, al.kx * dt, al.ky * dt, al.r); al.kx *= 0.86; al.ky *= 0.86; } else { al.kx = 0; al.ky = 0; }
+  const kk = Math.min(1, dt * 10);
+  al.svx += (al.mvx - al.svx) * kk; al.svy += (al.mvy - al.svy) * kk;
+  if (Math.abs(al.svx) + Math.abs(al.svy) > 0.02) {
     const ox = al.x, oy = al.y;
     const sp = owner && dist2(al.x, al.y, owner.x, owner.y) > (6 * TILE) ** 2 ? al.speed * 1.35 : al.speed;
-    moveBox(world, al, al.mvx * sp * dt, al.mvy * sp * dt, al.r);
+    moveBox(world, al, al.svx * sp * dt, al.svy * sp * dt, al.r);
     al.moving = Math.abs(al.x - ox) + Math.abs(al.y - oy) > 0.05;
   } else al.moving = false;
 }
@@ -1583,7 +1623,7 @@ function updateProjectiles(game, dt) {
     }
     if (!dead) {
       let hit = null;
-      forTargets(game, pr.team, (o) => {
+      forHits(game, pr.team, (o) => {
         if (hit) return;
         const by = bodyY(o), rr = radiusOf(o) + pr.r + 1;
         if (Math.abs(o.x - pr.x) > rr || Math.abs(by - pr.y) > rr) return;
@@ -1968,6 +2008,142 @@ function spawnRaid(game, raid) {
   emit(game, { t: 'raidgo', r: raid.target, f: raid.f, g: raid.gang });
 }
 
+// ------------------------------------------------------------------ civilians
+// People living in the city. They wander, run from gunfire, and can be recruited (G) if your gang has a good
+// reputation in the district. Hurting or killing them lowers that reputation.
+export function repOf(game, g, r) {
+  if (r < 0 || !g) return CIV.repStart;
+  const v = game.rep[g + ':' + r] ?? CIV.repStart;
+  return Math.max(0, Math.min(100, v + (game.rs[r] && game.rs[r].owner === g ? CIV.repOwnBonus : 0)));
+}
+function changeRep(game, g, r, d) {
+  if (r < 0 || !isGang(g)) return;
+  const k = g + ':' + r;
+  const before = repOf(game, g, r);
+  game.rep[k] = Math.max(-40, Math.min(100, (game.rep[k] ?? CIV.repStart) + d));
+  const after = repOf(game, g, r);
+  if (before >= CIV.repNeed && after < CIV.repNeed) emit(game, { t: 'msg', text: `The people of ${game.world.regions[r].name} turned against your gang.`, c: 'bad', g });
+}
+function markDanger(game, x, y, w = 1) {
+  const d = game.danger;
+  if (d.length && d[d.length - 1].t === game.time && Math.abs(d[d.length - 1].x - x) < 40) return;
+  d.push({ x, y, t: game.time, w });
+  if (d.length > 40) d.shift();
+}
+
+const CIV_GROUND = new Set([5, 10, 6, 2, 3, 7, 1, 14, 11]);   // sidewalk, stairs, calçadão, grass, dirt, concrete, sand, bridge, metal
+function spawnCiv(game, x, y) {
+  const c = {
+    id: game.nextId++, k: 'c', x, y, hp: CIV.hp, maxHp: CIV.hp, seed: (rand() * 100000) | 0, aim: rand() * 6.28,
+    mvx: 0, mvy: 0, svx: 0, svy: 0, kx: 0, ky: 0, flee: 0, fx: 0, fy: 0, wanderT: rand() * 3, wx: x, wy: y, flash: 0, moving: false, r: 4, stuck: 0,
+  };
+  game.civs.set(c.id, c);
+  return c;
+}
+
+function updateCivs(game, dt) {
+  game.civT -= dt;
+  if (game.civT <= 0) {
+    game.civT = 1;
+    const w = game.world;
+    const players = [...game.players.values()].filter((p) => !p.out);
+    for (const c of [...game.civs.values()]) {
+      if (!players.some((p) => dist2(p.x, p.y, c.x, c.y) < (42 * TILE) ** 2)) game.civs.delete(c.id);
+    }
+    for (const p of players) {
+      if (game.civs.size >= CIV.max) break;
+      let n = 0;
+      for (const c of game.civs.values()) if (dist2(p.x, p.y, c.x, c.y) < (28 * TILE) ** 2) n++;
+      for (let tries = 0; tries < 6 && n < CIV.perPlayer; tries++) {
+        const a = rand() * 6.28, d = (17 + rand() * 9) * TILE;
+        const x = p.x + Math.cos(a) * d, y = p.y + Math.sin(a) * d;
+        const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
+        if (tx < 1 || ty < 1 || tx >= w.W - 1 || ty >= w.H - 1) continue;
+        const i = ty * w.W + tx;
+        if (!w.reach[i] || !CIV_GROUND.has(w.tiles[i])) continue;
+        spawnCiv(game, (tx + 0.5) * TILE, (ty + 0.5) * TILE);
+        n++;
+      }
+    }
+    // reputation slowly heals toward neutral
+    game.repT += 1;
+    if (game.repT >= 10) { game.repT = 0; for (const k in game.rep) { const v = game.rep[k]; if (v < CIV.repStart) game.rep[k] = v + 2; } }
+  }
+  const world = game.world;
+  for (const c of game.civs.values()) {
+    if (c.flash > 0) c.flash -= dt;
+    if (Math.abs(c.kx) + Math.abs(c.ky) > 1) { moveBox(world, c, c.kx * dt, c.ky * dt, c.r); c.kx *= 0.86; c.ky *= 0.86; } else { c.kx = 0; c.ky = 0; }
+    // danger nearby? run the other way
+    for (let i = game.danger.length - 1; i >= 0; i--) {
+      const d = game.danger[i];
+      if (game.time - d.t > 1.2) break;
+      if (dist2(c.x, c.y, d.x, d.y) < (9 * TILE * d.w) ** 2) { c.flee = 3 + rand() * 2.5; c.fx = d.x; c.fy = d.y; break; }
+    }
+    let mx = 0, my = 0, sp = CIV.speed;
+    if (c.flee > 0) {
+      c.flee -= dt;
+      const dx = c.x - c.fx, dy = c.y - c.fy, l = Math.hypot(dx, dy) || 1;
+      mx = dx / l; my = dy / l; sp = CIV.fleeSpeed;
+      if (c.stuck > 0.4) { const a = Math.atan2(my, mx) + (c.id % 2 ? 1.4 : -1.4); mx = Math.cos(a); my = Math.sin(a); }
+    } else {
+      c.wanderT -= dt;
+      if (c.wanderT <= 0) {
+        c.wanderT = 2 + rand() * 5;
+        if (rand() < 0.65) { const a = rand() * 6.28, r = (1 + rand() * 4) * TILE; c.wx = c.x + Math.cos(a) * r; c.wy = c.y + Math.sin(a) * r; }
+        else { c.wx = c.x; c.wy = c.y; }
+      }
+      const dx = c.wx - c.x, dy = c.wy - c.y, l = Math.hypot(dx, dy);
+      if (l > 3 && c.stuck < 0.5) { mx = dx / l; my = dy / l; } else if (c.stuck >= 0.5) { c.wanderT = 0; c.stuck = 0; }
+    }
+    const k = Math.min(1, dt * 8);
+    c.svx += (mx - c.svx) * k; c.svy += (my - c.svy) * k;
+    if (Math.abs(c.svx) + Math.abs(c.svy) > 0.05) {
+      const ox = c.x, oy = c.y;
+      moveBox(world, c, c.svx * sp * dt, c.svy * sp * dt, c.r);
+      c.moving = Math.abs(c.x - ox) + Math.abs(c.y - oy) > 0.05;
+      c.stuck = c.moving ? 0 : c.stuck + dt;
+      if (c.moving) c.aim = Math.atan2(c.svy, c.svx);
+    } else c.moving = false;
+  }
+}
+
+function hurtCiv(game, c, dmg, src, kx = 0, ky = 0) {
+  if (!game.civs.has(c.id)) return;
+  c.hp -= dmg;
+  c.flash = 0.12;
+  c.flee = 4; c.fx = c.x - (kx || 1); c.fy = c.y - (ky || 0);
+  if (kx || ky) { c.kx += kx; c.ky += ky; }
+  emit(game, { t: 'dmg', x: c.x, y: c.y - 20, v: Math.round(dmg), c: 'civ' });
+  const team = src && src.team;
+  const r = regionAt(game.world, c.x, c.y);
+  if (c.hp <= 0) {
+    game.civs.delete(c.id);
+    emit(game, { t: 'die', x: c.x, y: c.y, tr: 1, f: -2, b: 0.9 });
+    if (isGang(team)) {
+      changeRep(game, team, r, -CIV.repKill);
+      for (const o of game.civs.values()) if (dist2(o.x, o.y, c.x, c.y) < (10 * TILE) ** 2) { o.flee = 5; o.fx = c.x; o.fy = c.y; }
+      if (src.k === 'p') emit(game, { t: 'msg', to: src.id, text: 'You killed a civilian. The locals will not trust your gang here for a while.', c: 'warn' });
+    }
+  } else if (isGang(team)) changeRep(game, team, r, -CIV.repHurt);
+}
+
+function recruitCiv(game, p) {
+  if (p.dead || p.veh) return;
+  let best = null, bd = 26 * 26;
+  for (const c of game.civs.values()) { const d = dist2(c.x, c.y, p.x, p.y); if (d < bd) { bd = d; best = c; } }
+  if (!best) return tell(game, p.id, 'Nobody close enough to talk to.');
+  if (followerCount(game, p.id) >= FOLLOWER_MAX) return tell(game, p.id, `Your crew is full (${FOLLOWER_MAX}).`);
+  const r = regionAt(game.world, best.x, best.y);
+  const rp = repOf(game, p.gang, r);
+  if (rp < CIV.repNeed) { best.flee = 3; best.fx = p.x; best.fy = p.y; return tell(game, p.id, `"Sai fora!" The locals don't trust your gang here (respect ${Math.round(rp)}/${CIV.repNeed}). Don't hurt civilians, take the district.`); }
+  if (best.flee > 0.5) return tell(game, p.id, 'They are too scared right now.');
+  game.civs.delete(best.id);
+  const al = spawnFollower(game, p, 1, { civ: best.seed || 1, melee: rand() < 0.45, x: best.x, y: best.y });
+  changeRep(game, p.gang, r, 2);
+  emit(game, { t: 'recruit', id: p.id, x: al.x, y: al.y, melee: al.melee });
+  p.dirty = true;
+}
+
 // ------------------------------------------------------------------ network packing
 const r1 = (v) => Math.round(v * 10) / 10;
 
@@ -1996,6 +2172,7 @@ export function privateState(game, p) {
     cash: Math.floor(p.cash), dead: p.dead, out: p.out, rt: r1(Math.max(0, p.respawnT)), cl: r1(Math.max(0, p.cloakT)),
     cd: { Q: r1(Math.max(0, p.cd.Q)), E: r1(Math.max(0, p.cd.E)), R: r1(Math.max(0, p.cd.R2)), F: r1(Math.max(0, p.cd.F)) },
     inv: p.invulnT > 0, veh: p.veh || 0, seat: p.seat, bat: p.battery, fol: followerCount(game, p.id), g: gangIdx(p.gang),
+    rep: Math.round(repOf(game, p.gang, regionAt(game.world, p.x, p.y))),
   };
 }
 
@@ -2028,16 +2205,18 @@ export function buildSnapshot(game, pid) {
   const A = [];
   for (const al of game.allies.values()) {
     if (al.hidden || !near(al.x, al.y)) continue;
-    A.push([al.id, r1(al.x), r1(al.y), Math.ceil(al.hp), al.maxHp, (al.flash > 0 ? 2 : 0) | (al.moving ? 8 : 0), +al.aim.toFixed(2), gangIdx(al.team), al.follow || 0, al.tier]);
+    A.push([al.id, r1(al.x), r1(al.y), Math.ceil(al.hp), al.maxHp, (al.flash > 0 ? 2 : 0) | (al.moving ? 8 : 0), +al.aim.toFixed(2), gangIdx(al.team), al.follow || 0, al.tier, al.civ || 0, al.melee ? 1 : 0]);
   }
   const Tu = [];
   for (const t of game.turrets.values()) {
     if (!near(t.x, t.y)) continue;
     Tu.push([t.id, t.x, t.y, +t.aim.toFixed(2), Math.ceil(t.hp), t.maxHp, TURRET_IDS.indexOf(t.type), t.mk, gangIdx(t.team), (t.deadT > 0 ? 1 : 0) | (t.flash > 0 ? 2 : 0)]);
   }
+  const Cv = [];
+  for (const c of game.civs.values()) if (near(c.x, c.y)) Cv.push([c.id, r1(c.x), r1(c.y), c.seed, (c.flee > 0 ? 1 : 0) | (c.flash > 0 ? 2 : 0) | (c.moving ? 4 : 0), +c.aim.toFixed(2), Math.round(100 * c.hp / c.maxHp)]);
   const K = [];
   for (const k of game.pickups.values()) if (near(k.x, k.y)) K.push([k.id, k.type === 'cash' ? 0 : 1, Math.round(k.x), Math.round(k.y), k.amount]);
-  return { t: 's', tm: +game.time.toFixed(2), day: +game.dayT.toFixed(4), P, E, A, T: Tu, V: vehicleRows(game), K, rc: game.radar[me.gang] || [], me: privateState(game, me) };
+  return { t: 's', tm: +game.time.toFixed(2), day: +game.dayT.toFixed(4), P, E, A, T: Tu, V: vehicleRows(game), C: Cv, K, rc: game.radar[me.gang] || [], me: privateState(game, me) };
 }
 
 export { WEAPON_IDS, MAP_SIZES };

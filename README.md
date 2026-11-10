@@ -42,10 +42,11 @@ Next time, the host loads the game from the title screen and friends rejoin as t
 | **R** | Cloak: enemies lose you, next hit does 2× *(needs Optical Camo)* |
 | **F** | Kinetic Shield *(needs Kinetic Shield)* |
 | **V** | Get in / out of a flying vehicle |
+| **G** | Talk to a civilian: recruit them into your crew |
 | **B** | Base menu (at your QG) or compound upgrades (near the core of a district you own) |
 | **TAB** | Territory map: click to place your waypoint, click a district to see / upgrade it |
 | **Enter** | Chat |
-| **ESC** | Menu: invite link, volume, save, quit |
+| **ESC** | Menu: invite link, volume, graphics quality, save, quit |
 | **M** | Music on/off |
 
 ### The game loop (PvE)
@@ -56,7 +57,8 @@ Next time, the host loads the game from the title screen and friends rejoin as t
    until the ring fills. Several players capture faster. Enemies near the core stop the capture.
 4. **The people join you.** A captured compound gets **guards** and pays **income** into the **gang vault**.
    Everyone standing on the core also gets a **crew member**: a follower bot that fights at your side
-   (up to 2 per player, stronger from tougher districts). **If a crew member dies, it is gone for good.**
+   (stronger from tougher districts). **If a crew member dies, it is gone for good.**
+   You can also recruit **civilians** (see below). Each player can lead up to **4** crew members in total.
 5. **Fortify.** Press **B** near the core of a district you own (or click it on the TAB map) to spend the vault on
    **turrets** and **upgrades** for that compound (see below).
 6. **Defend.** The factions send **raids** at your border districts. You get a 30-second warning and red arrows
@@ -65,6 +67,20 @@ Next time, the host loads the game from the title screen and friends rejoin as t
 7. **Take the HQs.** Control half of a faction's districts to unlock its **HQ** (yellow square on the map).
    A boss waits there: **Coronel Caveira** (Milícia), **CEO Androide** (NeoBrás) or **Rei do Baile** (Comando Cromo).
 8. **Win** by capturing all three HQs. You can keep playing afterwards, or start a new city.
+
+### Civilians and respect
+The streets are full of people going about their lives. Walk up to one and press **G** to talk: if your gang has
+enough **respect** in that district, they join your crew with a pistol or a machete and follow you into fights.
+- The panel at the top right shows how the **locals** see your gang here: *Friendly*, *Neutral* or *Hostile*.
+  Districts your gang controls start friendlier.
+- Civilians run from gunfire and explosions. Stray bullets and blasts can hurt them, and **hurting or killing
+  civilians makes the locals hate your gang** for a while — they flee and refuse to join. Respect slowly comes back.
+- Recruited civilians count toward your crew limit of 4 and are gone for good if they die.
+
+### Weight and impact
+Movement has a little momentum, every gun **kicks back** (shotguns, rockets and the rail arm the most; melee
+lunges you forward), and **explosions throw** players, bots and civilians around. Red barrels, gas cylinders,
+transformers and cars are great for that.
 
 ### PvP · Gang War
 - When you join, you **pick a gang color**. Same color = same gang. A new color starts a new gang at its own base
@@ -140,7 +156,12 @@ Vehicles are parked around the city (they show on the minimap and map). Press **
   every district has its own track, and the faction holding it picks the style — *Volt Mix* on your turf,
   dark *bruxaria* in Milícia land, *funk melody* in NeoBrás districts and fast *funk 150* in Comando Cromo turf.
   It gets heavier in fights and raids.
-- Night falls every few minutes. The neon signs, holograms and windows glow at night.
+- The city is drawn like the classic top-down GTA games: buildings are real 3D boxes whose walls lean away from the
+  center of the screen as you move, with lit windows that switch on and off. If you walk behind a tall building
+  your character shows as an outline.
+- The city is lit by its own lights: streetlights, neon signs (some flicker or change colors), trash fires,
+  windows, gunshots and explosions. Days feel like dusk and nights are very dark. Bases are floodlit.
+- On an older laptop, set **ESC → GRAPHICS: LOW** for a faster mode.
 
 ### Tips
 - Only districts touching your turf can be captured. Expand outward like a stain.
@@ -183,7 +204,8 @@ style.css         UI styling
 js/main.js        app flow, hosting/joining, save slots, game loop, prediction, vehicles, events → effects/sounds
 js/game.js        the simulation the host runs: combat, AI, gangs, territory, turrets, vehicles, raids, economy, saving
 js/world.js       procedural city generator (5 map types, bridges, props) + collision + pathfinding
-js/render.js      canvas renderer: tile chunks, sprites, neon lighting and glow, effects, waypoints
+js/render.js      canvas renderer: ground chunks, sprites, light map + bloom, 3D buildings pass, effects, waypoints
+js/buildings.js   GTA2-style 3D buildings: wall/roof textures, neon signs, lit windows, baking for the light
 js/sprites.js     all pixel art, drawn in code (characters, enemies, arms, vehicles, turrets, buildings, signs, props)
 js/ui.js          title screen, new-game setup + map preview, HUD, base and compound menus, maps, gang picker
 js/music.js       generative Brazilian funk (Web Audio, made entirely with code)

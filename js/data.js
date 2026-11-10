@@ -156,7 +156,22 @@ export const xpForLevel = (lvl) => Math.round(40 * Math.pow(lvl, 1.65));
 export const MAX_LEVEL = 40;
 export const RESPAWN_TIME = 5;
 export const DEATH_CASH_LOSS = 0.25;
-export const FOLLOWER_MAX = 2;           // follower bots per player (from captured districts)
+export const FOLLOWER_MAX = 4;           // followers per player in total (crew from captures + recruited civilians)
+
+// Recoil impulse (px/s) pushed into the shooter when firing. Negative = lunge forward (melee).
+export const RECOIL = { fist: -30, pistol: 32, blade: -40, shotgun: 120, whip: 24, hammer: -70, flamer: 10, smg: 14, rocket: 150, rail: 180 };
+export const EXPLOSION_PUSH = 300;       // knockback (px/s) at the center of an explosion
+
+// ------------------------------------------------------------------ civilians
+export const CIV = {
+  perPlayer: 9,          // civilians kept around each player
+  max: 46,               // in the whole city at once
+  hp: 30, speed: 26, fleeSpeed: 78,
+  repStart: 45,          // starting reputation of a gang in a district (0..100)
+  repOwnBonus: 25,       // extra reputation in your own districts
+  repNeed: 30,           // reputation needed to recruit
+  repHurt: 6, repKill: 25,
+};
 
 // ------------------------------------------------------------------ vehicles
 // Flying vehicles fly over buildings. Charge drains while flying; empty = slow crawl on the ground.

@@ -8,7 +8,7 @@
 
 import {
   TILE, WEAPONS, ABILITIES, randomLook, LOOK_KEYS, LOOK_OPTIONS, GANG_COLORS, NAME_COLORS, VEHICLES, VEHICLE_IDS,
-  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES,
+  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL,
 } from './data.js';
 import { randomSeed } from './rng.js';
 import { generateWorld, moveBox, regionAt, rayCast, opaqueAt } from './world.js';
@@ -37,7 +37,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
   del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
 };
-const prefs = Object.assign({ name: '', look: randomLook(), gangName: '', gangColor: GANG_COLORS[0], color: NAME_COLORS[0], music: 0.6, sfx: 0.8 }, store.get(PREFS_KEY) || {});
+const prefs = Object.assign({ name: '', look: randomLook(), gangName: '', gangColor: GANG_COLORS[0], color: NAME_COLORS[0], music: 0.6, sfx: 0.8, quality: 'high' }, store.get(PREFS_KEY) || {});
 for (const k of LOOK_KEYS) if (!(prefs.look[k] >= 0 && prefs.look[k] < LOOK_OPTIONS[k].length)) prefs.look[k] = 0;
 if (!NAME_COLORS.includes(prefs.color)) prefs.color = NAME_COLORS[0];
 if (!GANG_COLORS.includes(prefs.gangColor)) prefs.gangColor = GANG_COLORS[0];
@@ -62,20 +62,21 @@ const metaOf = (s) => ({ mode: s.mode || 'pve', map: s.map || { type: 'coastal',
 // ------------------------------------------------------------------ app state
 const canvas = document.getElementById('game');
 const renderer = createRenderer(canvas);
+renderer.quality = prefs.quality === 'low' ? 'low' : 'high';
 const input = createInput(canvas);
 window.addEventListener('resize', () => renderer.resize());
 
 const app = {
   mode: 'title',            // title | host | client
   world: null, game: null, myId: 'host', roomCode: null, slot: 0, mapOpts: null,
-  local: { x: 0, y: 0, aim: 0, dashT: 0, dashX: 0, dashY: 0, moving: false, vx: 0, vy: 0, lastDx: 0, lastDy: 1 },
+  local: { x: 0, y: 0, aim: 0, dashT: 0, dashX: 0, dashY: 0, moving: false, vx: 0, vy: 0, ix: 0, iy: 0, wx: 0, wy: 0, lastDx: 0, lastDy: 1 },
   menuOpen: false, typing: false, music: null, musicOn: true,
   titleCam: { t: 0 }, saveT: 0, sendT: 0, snapT: 0, acc: 0, intensityT: 0, trackKey: '',
   chats: new Map(),
 };
 const host = { peer: null, clients: new Map() };
 const client = {
-  peer: null, conn: null, players: new Map(), enemies: new Map(), allies: new Map(), pickups: new Map(), turrets: new Map(), vehicles: new Map(), projectiles: [],
+  peer: null, conn: null, players: new Map(), enemies: new Map(), allies: new Map(), pickups: new Map(), turrets: new Map(), vehicles: new Map(), civs: new Map(), projectiles: [],
   me: null, prof: null, rg: null, roster: new Map(), day: 0.3, cd: { L: 0, R: 0 }, radar: [], broken: new Set(), mode: 'pve', seed: 0,
 };
 
@@ -98,6 +99,7 @@ const ui = createUI(document.getElementById('menus'), {
     if (k === 'invite') copyInvite();
     if (k === 'leave') leaveGame();
     if (k === 'save') { saveNow(); ui.toast('Game saved.', 'good'); }
+    if (k === 'quality') { prefs.quality = renderer.quality = renderer.quality === 'low' ? 'high' : 'low'; store.set(PREFS_KEY, prefs); ui.toast(`Graphics: ${renderer.quality.toUpperCase()}`, 'good'); }
   },
 });
 
@@ -333,7 +335,7 @@ function cleanupClient() {
   try { client.conn && client.conn.close(); } catch { /* ignore */ }
   try { client.peer && client.peer.destroy(); } catch { /* ignore */ }
   client.peer = null; client.conn = null;
-  for (const m of [client.players, client.enemies, client.allies, client.pickups, client.turrets, client.vehicles]) m.clear();
+  for (const m of [client.players, client.enemies, client.allies, client.pickups, client.turrets, client.vehicles, client.civs]) m.clear();
   client.projectiles = [];
   client.me = null; client.prof = null; client.rg = null;
 }
@@ -419,7 +421,7 @@ function applySnapshot(s) {
   });
   syncMap(client.allies, s.A, (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => {
     o.tx = r[1]; o.ty = r[2]; o.hp = r[3]; o.maxHp = r[4]; o.flash = r[5] & 2 ? 0.1 : 0; o.moving = !!(r[5] & 8); o.aim = r[6];
-    o.team = r[7]; o.follow = r[8] || null; o.tier = r[9];
+    o.team = r[7]; o.follow = r[8] || null; o.tier = r[9]; o.civ = r[10] || 0; o.melee = !!r[11];
   });
   syncMap(client.turrets, s.T || [], (r) => ({ id: r[0] }), (o, r) => {
     o.x = r[1]; o.y = r[2]; o.aim = r[3]; o.hp = r[4]; o.maxHp = r[5]; o.type = TURRET_IDS[r[6]]; o.mk = r[7]; o.team = r[8]; o.dead = !!(r[9] & 1); o.flash = !!(r[9] & 2);
@@ -427,6 +429,9 @@ function applySnapshot(s) {
   syncMap(client.vehicles, s.V || [], (r) => ({ id: r[0], x: r[2], y: r[3] }), (o, r) => {
     o.type = VEHICLE_IDS[r[1]]; o.tx = r[2]; o.ty = r[3]; o.hp = r[4]; o.maxHp = r[5]; o.charge = r[6]; o.dir = r[7];
     o.flying = !!(r[8] & 1); o.flash = !!(r[8] & 2); o.charging = !!(r[8] & 4); o.team = r[9]; o.seats = r.slice(10).map((x) => x || null);
+  });
+  syncMap(client.civs, s.C || [], (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => {
+    o.tx = r[1]; o.ty = r[2]; o.seed = r[3]; o.flee = !!(r[4] & 1); o.flash = !!(r[4] & 2); o.moving = !!(r[4] & 4); o.aim = r[5]; o.hpPct = r[6];
   });
   syncMap(client.pickups, s.K, (r) => ({ id: r[0] }), (o, r) => { o.type = r[1] ? 'heal' : 'cash'; o.x = r[2]; o.y = r[3]; });
   if (client.me.veh && client.me.veh !== prevVeh) { const v = client.vehicles.get(client.me.veh); if (v) { app.local.x = v.tx; app.local.y = v.ty; app.local.vx = app.local.vy = 0; } }
@@ -436,7 +441,7 @@ function applySnapshot(s) {
 function clientTick(dt) {
   // interpolate others
   const k = Math.min(1, dt * 14);
-  for (const m of [client.players, client.enemies, client.allies, client.vehicles]) for (const o of m.values()) {
+  for (const m of [client.players, client.enemies, client.allies, client.vehicles, client.civs]) for (const o of m.values()) {
     if (o.tx === undefined) continue;
     if (Math.abs(o.tx - o.x) > 160 || Math.abs(o.ty - o.y) > 160) { o.x = o.tx; o.y = o.ty; }
     o.x += (o.tx - o.x) * k; o.y += (o.ty - o.y) * k;
@@ -475,9 +480,13 @@ function clientTick(dt) {
   }
 }
 
+function kick(a, k) { app.local.ix -= Math.cos(a) * k; app.local.iy -= Math.sin(a) * k; }
+
 function predictFire(slot, wid) {
   const Wp = WEAPONS[wid];
   const L = app.local, a = L.aim;
+  if (RECOIL[wid] && !myVehicle()) kick(a, RECOIL[wid]);
+  if (Wp.kind === 'ranged' || Wp.kind === 'rocket' || Wp.kind === 'beam') renderer.light(L.x + Math.cos(a) * 12, L.y - 8 + Math.sin(a) * 12, wid === 'shotgun' || wid === 'rocket' || wid === 'rail' ? 90 : 60, '#ffd08a', 0.07, 1.4);
   const lift = myVehicle() && myVehicle().flying ? 12 : 0;
   const ox = L.x + Math.cos(a) * 6, oy = L.y - 8 - lift + Math.sin(a) * 6;
   const key = 'p' + app.myId;
@@ -493,7 +502,8 @@ function predictFire(slot, wid) {
       client.projectiles.push({ x: ox, y: oy, vx: Math.cos(sa) * sp, vy: Math.sin(sa) * sp, life: Wp.life, kind: Wp.proj, local: true });
     }
     renderer.recoil(key, slot);
-    muzzle(ox + Math.cos(a) * 10, oy + Math.sin(a) * 10, a);
+    muzzle(ox + Math.cos(a) * 10, oy + Math.sin(a) * 10, a, wid === 'shotgun');
+    if (wid === 'shotgun') renderer.addShake(1.5);
     sfx(Wp.proj === 'pellet' ? 'shotgun' : Wp.proj === 'smart' ? 'smg' : 'pistol');
   } else if (Wp.kind === 'flame') {
     renderer.flame(ox + Math.cos(a) * 8, oy + Math.sin(a) * 8, a, Wp.range);
@@ -524,7 +534,7 @@ function predictFire(slot, wid) {
   }
 }
 
-function muzzle(x, y, a) { renderer.effect({ k: 'muzzle', x, y, a, life: 0.05 }); }
+function muzzle(x, y, a, big = false) { renderer.effect({ k: 'muzzle', x, y, a, life: big ? 0.07 : 0.05, big }); }
 
 // ------------------------------------------------------------------ events → effects, sounds, UI
 const SHOT_SFX = { pulse: 'pistol', pellet: 'shotgun', smart: 'smg', rocket: 'rocket', ebullet: 'ebullet', eball: 'ebullet', erocket: 'rocket', tbullet: 'tmg' };
@@ -556,7 +566,8 @@ function handleEvent(ev) {
       if (isHost || ev.o !== app.myId) {
         sfx(SHOT_SFX[ev.k] || 'pistol', ev.x, ev.y, ev.tm === 'e' ? 0.7 : 0.8);
         if (ev.o && typeof ev.o === 'string' && ev.o[0] !== 't') renderer.recoil('p' + ev.o, 'R');
-        muzzle(ev.x, ev.y, ev.a);
+        muzzle(ev.x, ev.y, ev.a, ev.k === 'pellet' || ev.k === 'rocket' || ev.k === 'erocket');
+        renderer.light(ev.x, ev.y, ev.k === 'rocket' || ev.k === 'erocket' ? 90 : 56, ev.tm === 'e' ? '#ff8a6a' : '#ffd08a', 0.06, 1.3);
       }
       break;
     }
@@ -567,7 +578,7 @@ function handleEvent(ev) {
       sfx('spark', ev.x, ev.y, 0.5);
       break;
     case 'dmg': {
-      const col = { hit: '#ffffff', crit: '#ffd23f', player: '#ff3b5c', heal: '#3ddc84', ally: '#ff9ab8', burn: '#ff8a3d', veh: '#c8c0ff' }[ev.c] || '#fff';
+      const col = { hit: '#ffffff', crit: '#ffd23f', player: '#ff3b5c', heal: '#3ddc84', ally: '#ff9ab8', burn: '#ff8a3d', veh: '#c8c0ff', civ: '#c8c0d8' }[ev.c] || '#fff';
       renderer.text(ev.x + (Math.random() - 0.5) * 6, ev.y, (ev.c === 'heal' ? '+' : '') + ev.v + (ev.c === 'crit' ? '!' : ''), col);
       if (ev.c === 'hit' || ev.c === 'crit') { renderer.burst(ev.x, ev.y + 8, ['#ffffff', '#ffd23f', '#9af0ff'], 4, 50, 0.25); sfx('hit', ev.x, ev.y, 0.6); }
       break;
@@ -576,7 +587,14 @@ function handleEvent(ev) {
       if (ev.id === app.myId) { renderer.screenFlash('#ff0030', 0.25); renderer.addShake(2.5); sfx('hurt'); }
       break;
     case 'knock':
-      if (ev.id === app.myId) moveBox(app.world, app.local, ev.x, ev.y, G.PLAYER_R);
+      if (ev.id === app.myId && !myVehicle()) { app.local.ix += ev.x; app.local.iy += ev.y; }
+      break;
+    case 'kick':
+      if (isHost && ev.id === app.myId) kick(ev.a, ev.k);
+      break;
+    case 'recruit':
+      renderer.effect({ k: 'pillar', x: ev.x, y: ev.y, c: '#ffd23f', life: 0.6 });
+      if (ev.id === app.myId) { sfx('follower'); ui.toast(`"Tô contigo!" A local joins your crew with ${ev.melee ? 'a machete' : 'a pistol'}.`, 'good'); }
       break;
     case 'swing':
       if (mine) break;
@@ -618,16 +636,17 @@ function handleEvent(ev) {
       renderer.effect({ k: 'beam', x: ev.x, y: ev.y, x2: ev.x2, y2: ev.y2, c: ev.c, life: 0.22 });
       sfx('beam', ev.x, ev.y);
       break;
-    case 'boom':
-      renderer.effect({ k: 'boom', x: ev.x, y: ev.y, r: ev.r, life: 0.45 });
-      renderer.burst(ev.x, ev.y, ['#ffd23f', '#ff6a2b', '#ff3b5c', '#5a4a5a'], 26, 120, 0.7, 0, true);
-      for (let i = 0; i < 6; i++) renderer.smoke(ev.x + (Math.random() - 0.5) * ev.r, ev.y, '#4a4652', 1, -16, 1.6);
-      if (near(ev.x, ev.y, 260)) renderer.addShake(6);
+    case 'boom': {
+      renderer.explosion(ev.x, ev.y, ev.r);
+      const d = me ? Math.hypot(ev.x - app.local.x, ev.y - app.local.y) : 999;
+      if (d < 320) renderer.addShake(9 * (1 - d / 320) + 1);
+      if (d < 140) renderer.screenFlash('#fff2d0', 0.18 * (1 - d / 140) + 0.04);
       sfx('boom', ev.x, ev.y);
       break;
+    }
     case 'brk':
       if (ev.k === 'zap') {
-        renderer.effect({ k: 'boom', x: ev.x, y: ev.y, r: ev.r, life: 0.4, zap: true });
+        renderer.explosion(ev.x, ev.y, ev.r * 0.8, 'zap');
         for (let i = 0; i < 5; i++) renderer.effect({ k: 'zap', x: ev.x, y: ev.y, x2: ev.x + (Math.random() - 0.5) * ev.r * 2, y2: ev.y + (Math.random() - 0.5) * ev.r * 1.5, life: 0.25 });
         sfx('zapboom', ev.x, ev.y);
       } else for (let i = 0; i < 4; i++) renderer.flame(ev.x, ev.y, Math.random() * 6.28, 30);
@@ -635,7 +654,7 @@ function handleEvent(ev) {
       break;
     case 'tele': renderer.effect({ k: 'tele', x: ev.x, y: ev.y, r: ev.r, d: ev.d }); sfx('tele', ev.x, ev.y, 0.6); break;
     case 'die': {
-      const cols = ev.f >= 0 ? ['#ffffff', '#ffd23f', '#9aa6b8', '#56606e', ['#c9c05a', '#3ad0ff', '#a66bff'][ev.f]] : ['#ffffff', '#ff9ab8'];
+      const cols = ev.f >= 0 ? ['#ffffff', '#ffd23f', '#9aa6b8', '#56606e', ['#c9c05a', '#3ad0ff', '#a66bff'][ev.f]] : ev.f === -2 ? ['#c83a3a', '#8a2a2a', '#ffffff'] : ['#ffffff', '#ff9ab8'];
       renderer.burst(ev.x, ev.y - 6, cols, 10 + Math.round(ev.b * 8), 70 * ev.b, 0.7, 120);
       renderer.effect({ k: 'ring', x: ev.x, y: ev.y - 6, r: 10 * ev.b, c: '#ffffff', life: 0.2 });
       sfx(ev.b > 1.4 ? 'bigdie' : 'die', ev.x, ev.y);
@@ -686,10 +705,9 @@ function handleEvent(ev) {
     case 'vexit': sfx('vexit', ev.x, ev.y); break;
     case 'vland': sfx('land', ev.x, ev.y); renderer.burst(ev.x, ev.y, ['#8a8494', '#c8c0d8'], 14, 60, 0.6); break;
     case 'vboom':
-      renderer.effect({ k: 'boom', x: ev.x, y: ev.y - 10, r: 56, life: 0.7 });
-      renderer.burst(ev.x, ev.y - 10, ['#ffd23f', '#ff6a2b', '#ff3b5c', '#22e5ff', '#3a3646'], 40, 140, 0.9, 120, true);
-      for (let i = 0; i < 10; i++) renderer.smoke(ev.x + (Math.random() - 0.5) * 40, ev.y - 10, '#3a3640', 1, -20, 2);
-      if (near(ev.x, ev.y, 300)) renderer.addShake(8);
+      renderer.explosion(ev.x, ev.y - 10, 60);
+      renderer.burst(ev.x, ev.y - 10, ['#22e5ff', '#9af0ff', '#3a3646'], 30, 160, 0.9, 120, true);
+      if (near(ev.x, ev.y, 300)) { renderer.addShake(10); renderer.screenFlash('#fff2d0', 0.2); }
       sfx('vboom', ev.x, ev.y);
       break;
     case 'follower':
@@ -766,6 +784,7 @@ function entityByKey(k) {
     return app.mode === 'host' ? app.game.players.get(id) : client.players.get(id);
   }
   const n = Number(id);
+  if (k[0] === 'a') return app.mode === 'host' ? app.game.allies.get(n) : client.allies.get(n);
   return app.mode === 'host' ? app.game.enemies.get(n) : client.enemies.get(n);
 }
 
@@ -903,6 +922,7 @@ function gameFrame(dt, now) {
       else ui.toast('B opens the base menu at your QG, or the upgrades of a compound you own (stand near its core).', 'warn');
     } else if (ui.isOpen()) continue;
     else if (code === 'KeyV') { sendAction({ t: 'veh' }); }
+    else if (code === 'KeyG') { sendAction({ t: 'recruit' }); }
     else if (code === 'KeyQ' || code === 'Space' || code === 'ShiftLeft' || code === 'ShiftRight') useAbility('Q');
     else if (code === 'KeyE') useAbility('E');
     else if (code === 'KeyR') useAbility('R');
@@ -932,18 +952,28 @@ function gameFrame(dt, now) {
       setEngine(0.3, veh.type === 'car' ? 0.8 : 1.1);
     } else {
       setEngine(0);
-      let mx, my;
       if (ax.x || ax.y) { L.lastDx = ax.x; L.lastDy = ax.y; }
+      // light momentum: quick acceleration, short slide when stopping
+      const tvx = ax.x * speed, tvy = ax.y * speed;
+      const acc = 1 - Math.exp(-dt * (ax.x || ax.y ? 16 : 11));
+      L.wx += (tvx - L.wx) * acc; L.wy += (tvy - L.wy) * acc;
+      let mx, my;
       if (L.dashT > 0) {
         L.dashT -= dt;
         mx = L.dashX * 300 * dt; my = L.dashY * 300 * dt;
+        L.wx = L.dashX * speed; L.wy = L.dashY * speed;
         if (Math.random() < 0.7) renderer.ghost(L.x, L.y, currentSpriteGuess());
-      } else { mx = ax.x * speed * dt; my = ax.y * speed * dt; }
+      } else { mx = L.wx * dt; my = L.wy * dt; }
+      // recoil and knockback impulses
+      mx += L.ix * dt; my += L.iy * dt;
+      const dec = Math.exp(-dt * 6.5);
+      L.ix *= dec; L.iy *= dec;
+      if (Math.abs(L.ix) < 2) L.ix = 0; if (Math.abs(L.iy) < 2) L.iy = 0;
       const ox = L.x, oy = L.y;
       moveBox(world, L, mx, my, G.PLAYER_R);
       L.moving = Math.abs(L.x - ox) + Math.abs(L.y - oy) > 0.01;
     }
-  } else { L.moving = false; setEngine(0); }
+  } else { L.moving = false; L.wx = L.wy = L.ix = L.iy = 0; setEngine(0); }
   const mw = renderer.screenToWorld(input.mouse.x, input.mouse.y);
   const lift = veh && veh.flying ? 12 : 0;
   L.aim = Math.atan2(mw.y - (L.y - 8 - lift), mw.x - L.x);
@@ -1005,7 +1035,7 @@ function gameFrame(dt, now) {
     vault: myGangObj.vault, up: myGangObj.up || {}, gangs, mode: view.mode, myGang: myG,
     rs: view.rs, raids: view.raids.map((r) => ({ target: r.target, f: r.f, state: r.state === 'warn' ? 0 : 1, t: Math.max(0, Math.round(r.t)), g: r.g })),
     gangName: myGangObj.name, gangColor: GANG_COLORS[myG], regionId: rid,
-    inBase: inBaseLocal(), nearCompound: nearOwnCompound(), nearVehicle,
+    inBase: inBaseLocal(), nearCompound: nearOwnCompound(), nearVehicle, civPrompt: view.civPrompt, quality: renderer.quality,
     roomCode: app.roomCode, isHost, playerCount: view.players.length, players, enemiesNear, radar: isHost ? st.radar[myGangId()] || [] : client.radar,
     vehicles: view.vehicles.map((v) => ({ x: v.x, y: v.y, charge: v.charge, type: v.type })),
     vehicle: veh ? { type: veh.type, hp: veh.hp, maxHp: veh.maxHp, charge: Math.round(veh.charge), flying: veh.flying, charging: veh.charging, seat: me.seat } : null,
@@ -1044,7 +1074,7 @@ function buildView() {
   const isHost = app.mode === 'host';
   const L = app.local;
   const chatOf = (id) => { const c = app.chats.get(id); return c && c.t > renderer.time ? c : null; };
-  let players, enemies, allies, pickups, projectiles, turrets, vehicles, rs, raids, dayT, broken, mode, waypointsSrc;
+  let players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, rs, raids, dayT, broken, mode, waypointsSrc;
   const myG = myGangIdx();
   if (isHost) {
     const g = app.game;
@@ -1056,10 +1086,11 @@ function buildView() {
       veh: p.veh || 0, seat: p.seat,
     }));
     enemies = [...g.enemies.values()].map((e) => ({ ...e, burn: e.burnT > 0 }));
-    allies = [...g.allies.values()].filter((a) => !a.hidden).map((a) => ({ id: a.id, x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp, flash: a.flash, moving: a.moving, aim: a.aim, team: G.gangIdx(a.team), follow: a.follow, tier: a.tier }));
+    allies = [...g.allies.values()].filter((a) => !a.hidden).map((a) => ({ id: a.id, x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp, flash: a.flash, moving: a.moving, aim: a.aim, team: G.gangIdx(a.team), follow: a.follow, tier: a.tier, civ: a.civ, melee: a.melee }));
     turrets = [...g.turrets.values()].map((t) => ({ id: t.id, x: t.x, y: t.y, aim: t.aim, hp: t.hp, maxHp: t.maxHp, type: t.type, mk: t.mk, team: G.gangIdx(t.team), dead: t.deadT > 0, flash: t.flash > 0 }));
     vehicles = [...g.vehicles.values()].map((v) => ({ id: v.id, type: v.type, x: v.x, y: v.y, hp: v.hp, maxHp: v.maxHp, charge: v.charge, dir: v.dir, flying: v.flying, flash: v.flash > 0, charging: v.charging, team: G.gangIdx(v.team), seats: v.seats }));
     pickups = [...g.pickups.values()]; projectiles = g.projectiles;
+    civs = [...g.civs.values()].map((c) => ({ id: c.id, x: c.x, y: c.y, seed: c.seed, flee: c.flee > 0, flash: c.flash > 0, moving: c.moving, aim: c.aim, hpPct: Math.round(100 * c.hp / c.maxHp) }));
     rs = g.rs; raids = g.raids.map((r) => ({ ...r, g: G.gangIdx(r.gang) })); dayT = g.dayT;
     broken = new Set([...g.brk.entries()].filter(([, s]) => s.deadT > 0).map(([k]) => k));
     waypointsSrc = [...g.players.values()].map((p) => ({ name: p.name, color: p.color, wp: p.wp, g: G.gangIdx(p.gang), me: p.id === 'host' }));
@@ -1077,7 +1108,7 @@ function buildView() {
       });
     }
     enemies = [...client.enemies.values()]; allies = [...client.allies.values()]; pickups = [...client.pickups.values()]; projectiles = client.projectiles;
-    turrets = [...client.turrets.values()]; vehicles = [...client.vehicles.values()];
+    turrets = [...client.turrets.values()]; vehicles = [...client.vehicles.values()]; civs = [...client.civs.values()];
     rs = client.rg.rs; raids = client.rg.raids; dayT = client.day; broken = client.rg.broken;
     waypointsSrc = [...client.roster.values()].map((r) => ({ name: r.name, color: r.color, wp: r.wp, g: r.g, me: r.id === app.myId }));
   }
@@ -1090,7 +1121,9 @@ function buildView() {
   const waypoints = waypointsSrc.filter((w) => w.wp && (mode !== 'pvp' || w.g === myG)).map((w) => ({ x: w.wp.x, y: w.wp.y, color: w.color || '#fff', name: w.name, mine: w.me }));
   const meP = players.find((p) => p.id === app.myId);
   if (meP && meP.veh) { const v = vehicles.find((x) => x.id === meP.veh); if (v) meP.alt = v.flying ? 11 : 1; }
-  return { world: app.world, me: meP, meMoving: L.moving, players, enemies, allies, pickups, projectiles, turrets, vehicles, rs, raids, gangColor: GANG_COLORS[myG], myGang: myG, mode, dayT, broken, waypoints };
+  let civPrompt = 0;
+  if (meP && !meP.dead && !meP.veh) { let bd = 24 * 24; for (const c of civs) { const d = (c.x - L.x) ** 2 + (c.y - L.y) ** 2; if (d < bd && !c.flee) { bd = d; civPrompt = c.id; } } }
+  return { world: app.world, me: meP, meMoving: L.moving, players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, civPrompt, rs, raids, gangColor: GANG_COLORS[myG], myGang: myG, mode, dayT, broken, waypoints };
 }
 
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -1101,4 +1134,5 @@ requestAnimationFrame(frame);
 window.__app = app;
 window.__G = G;
 window.__client = client;
+window.__renderer = renderer;
 void FACTIONS;

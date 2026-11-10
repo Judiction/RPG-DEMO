@@ -748,7 +748,7 @@ function buildProps(world) {
       const nearRoad = near(x, y, T.ROAD);
       if (nearRoad && (x * 7 + y * 13) % 11 === 0 && h < 0.7) {
         P('lamp', px, py, 0);
-        lights.push({ x: px, y: py - 26, r: 48, c: h < 0.35 ? '#ff4fd8' : '#ffd88a' });
+        lights.push({ x: px, y: py - 26, r: 58, c: h < 0.35 ? '#ff4fd8' : '#ffd88a', anim: h2 < 0.06 ? 'broken' : undefined, seed: h2 * 100 });
       } else if (h < 0.03 && biome !== 'downtown') P('palm', px, py, v);
       else if (h < 0.06) P('bin', px, py, v);
       else if (h < 0.075) P('bench', px, py, v);
@@ -804,39 +804,41 @@ function buildProps(world) {
       else if (hash2(x, y, seed + 5) < 0.004) world.smokers.push({ x: x * TILE + 8, y: y * TILE + 8, k: 'steam' });
     }
   }
-  // signs, billboards, holograms, window light, chimneys
+  // building heights (floors), signs, billboards, holograms, chimneys
   for (const b of world.buildings) {
-    const h = hash2(b.x, b.y, ps + 1), h2 = hash2(b.x, b.y, ps + 2), h3 = hash2(b.x, b.y, ps + 3);
-    const rh = (b.h - b.fr) * TILE;
+    const h = hash2(b.x, b.y, ps + 1), h2 = hash2(b.x, b.y, ps + 2), h3 = hash2(b.x, b.y, ps + 3), h4 = hash2(b.x, b.y, ps + 4);
+    b.floors = buildingFloors(b, h4);
+    b.H = b.style === 'container' ? 9 : b.floors * FLOOR_PX + 4;
     const brandOf = (cats, hh) => { const list = BRANDS.map((B, i) => [B, i]).filter(([B]) => cats.includes(B.cat)); return list[(hh * 9973 | 0) % list.length][1]; };
-    const sx = (b.x + b.w / 2) * TILE, sy = b.y * TILE + rh + 4;
+    const sx = (b.x + b.w / 2) * TILE, sy = (b.y + b.h) * TILE + 5;          // street in front of the south facade
     let sign = null;
     if (b.style === 'shop' || (b.style === 'house' && h < 0.35) || b.style === 'kiosk') sign = { kind: 'panel', brand: brandOf(['food', 'shop', 'night'], h2) };
-    else if (b.style === 'tower') sign = h < 0.5 ? { kind: 'panel', brand: brandOf(['corp', 'night', 'shop'], h2) } : h < 0.85 ? { kind: 'vertical', brand: brandOf(['corp', 'night', 'food'], h2), right: h3 < 0.5 } : null;
-    else if (b.style === 'apartment' && h < 0.55) sign = { kind: 'vertical', brand: brandOf(['night', 'food', 'shop'], h2), right: h3 < 0.5 };
+    else if (b.style === 'tower') sign = h < 0.45 ? { kind: 'panel', brand: brandOf(['corp', 'night', 'shop'], h2) } : h < 0.9 ? { kind: 'vertical', brand: brandOf(['corp', 'night', 'food'], h2), right: h3 < 0.5 } : null;
+    else if (b.style === 'apartment' && h < 0.6) sign = { kind: 'vertical', brand: brandOf(['night', 'food', 'shop'], h2), right: h3 < 0.5 };
     else if ((b.style === 'warehouse' || b.style === 'factory') && h < 0.6 && b.w >= 4) sign = { kind: 'panel', brand: brandOf(['ind'], h2) };
     else if (b.style === 'club') sign = { kind: 'marquee', brand: brandOf(['night'], h2) };
     else if (b.style === 'church') sign = { kind: 'cross' };
-    else if (b.style === 'favela' && h < 0.12 && b.w >= 3) sign = { kind: 'panel', brand: brandOf(['food', 'night', 'shop'], h2) };
+    else if (b.style === 'favela' && h < 0.15 && b.w >= 3) sign = { kind: 'panel', brand: brandOf(['food', 'night', 'shop'], h2) };
     if (sign) {
       b.sign = sign;
       sign.c = sign.kind === 'cross' ? '#ff3b5c' : BRANDS[sign.brand].c;
-      const lx = sign.kind === 'vertical' ? (sign.right ? (b.x + b.w) * TILE - 2 : b.x * TILE + 2) : sx;
-      const ly = sign.kind === 'vertical' ? b.y * TILE + rh + b.fr * 6 : sy;
-      lights.push({ x: lx, y: ly, r: 46 + b.w * 4, c: sign.c, flicker: h3 < 0.12 });
+      sign.c2 = sign.kind === 'cross' ? '#ffffff' : BRANDS[sign.brand].c2;
+      // animated neon: some flicker, some swap colors, some pulse
+      sign.anim = sign.kind === 'marquee' ? 'chase' : h3 < 0.14 ? 'flicker' : h3 < 0.34 ? 'swap' : h3 < 0.5 ? 'pulse' : 'steady';
+      const lx = sign.kind === 'vertical' ? (sign.right ? (b.x + b.w) * TILE - 4 : b.x * TILE + 4) : sx;
+      lights.push({ x: lx, y: sy, r: 50 + b.w * 4, c: sign.c, c2: sign.c2, anim: sign.anim, seed: h * 100 });
     }
-    // rooftop billboards (towers, apartments, warehouses) and holograms (downtown towers)
-    if ((b.style === 'tower' || b.style === 'apartment' || b.style === 'warehouse') && b.w >= 4 && rh >= 32 && h2 > 0.62) {
-      b.board = { brand: brandOf(['corp', 'food', 'night', 'shop'], h3) };
-      lights.push({ x: sx, y: b.y * TILE + 10, r: 54, c: BRANDS[b.board.brand].c });
-    } else if (b.style === 'tower' && b.fr >= 3 && b.w >= 4 && h3 > 0.55) {
+    // rooftop billboards (towers, apartments, warehouses) and holograms (tall towers)
+    if ((b.style === 'tower' || b.style === 'apartment' || b.style === 'warehouse') && b.w >= 4 && b.h >= 3 && h2 > 0.62) {
+      b.board = { brand: brandOf(['corp', 'food', 'night', 'shop'], h3), anim: h < 0.3 ? 'swap' : 'steady' };
+    } else if (b.style === 'tower' && b.floors >= 6 && b.w >= 4 && h3 > 0.5) {
       const brand = brandOf(['corp', 'night', 'food'], h);
-      world.holos.push({ x: sx, y: b.y * TILE + rh / 2, brand, seed: (h * 1000) | 0 });
-      lights.push({ x: sx, y: b.y * TILE + rh / 2 - 16, r: 62, c: BRANDS[brand].c });
+      world.holos.push({ x: sx, y: (b.y + b.h / 2) * TILE, z: b.H, brand, seed: (h * 1000) | 0 });
     }
-    if (b.style === 'favela' && h < 0.5) lights.push({ x: (b.x + b.w / 2) * TILE, y: (b.y + b.h) * TILE - 6, r: 26, c: '#ffcf7a' });
-    if (b.style === 'factory' || (b.style === 'warehouse' && h3 < 0.25)) world.smokers.push({ x: b.x * TILE + 8 + ((h2 * (b.w - 1)) | 0) * TILE, y: b.y * TILE + 2, k: 'smoke' });
-    if (b.style === 'club') lights.push({ x: sx, y: (b.y + b.h) * TILE - 4, r: 60, c: '#ff3fa4', flicker: true });
+    // lit windows spill a little warm light at the foot of the building at night
+    if (b.style !== 'container' && b.style !== 'ruin' && h < 0.55) lights.push({ x: sx, y: sy, r: 22 + b.w * 3, c: b.style === 'tower' ? '#9ab8ff' : '#ffcf7a', night: true });
+    if (b.style === 'factory' || (b.style === 'warehouse' && h3 < 0.25)) world.smokers.push({ x: b.x * TILE + 8 + ((h2 * (b.w - 1)) | 0) * TILE, y: (b.y + 1) * TILE, z: b.H, k: 'smoke' });
+    if (b.style === 'club') lights.push({ x: sx, y: sy + 4, r: 64, c: '#ff3fa4', c2: '#22e5ff', anim: 'strobe', seed: h * 100 });
   }
   // compound cores & base stations
   for (const R of regions) {
@@ -845,6 +847,14 @@ function buildProps(world) {
     if (C.stations) for (const s of C.stations) {
       props.push({ type: 'station', kind: s.kind, x: s.x * TILE + 8, y: s.y * TILE + 12 });
       lights.push({ x: s.x * TILE + 8, y: s.y * TILE, r: 50, c: STATION_COLORS[s.kind] });
+    }
+    // bases are well lit: floodlights in the corners and over the core
+    if (R.base) {
+      for (const [fx, fy] of [[C.x + 2, C.y + 2], [C.x + C.w - 3, C.y + 2], [C.x + 2, C.y + C.h - 3], [C.x + C.w - 3, C.y + C.h - 3]]) {
+        props.push({ type: 'flood', x: fx * TILE + 8, y: fy * TILE + 12, v: 0 });
+        lights.push({ x: fx * TILE + 8, y: fy * TILE + 4, r: 120, c: '#fff4dc', base: true });
+      }
+      lights.push({ x: (C.coreX + 0.5) * TILE, y: (C.coreY + 0.5) * TILE, r: 150, c: '#ffe8c8', base: true });
     }
   }
   // power lines between poles ("gatos" in the favela)
@@ -871,6 +881,25 @@ function buildProps(world) {
   world.holoGrid = grid(world.holos);
   world.gridW = cw; world.gridH = ch;
   world.bucket = bucket;
+}
+
+// building heights: floors per style (deterministic from the building's own hash)
+export const FLOOR_PX = 13;
+export function buildingFloors(b, r) {
+  switch (b.style) {
+    case 'favela': return 1 + (b.fr >= 2 ? 1 : 0) + (r < 0.35 ? 1 : 0);
+    case 'house': return 1 + (r < 0.4 ? 1 : 0);
+    case 'shop': return 2 + (r < 0.4 ? 1 : 0);
+    case 'church': return 3;
+    case 'apartment': return 3 + Math.floor(r * 3) + (b.w * b.h > 18 ? 1 : 0);
+    case 'tower': return Math.min(10, 4 + b.fr + Math.floor(r * 3) + (b.w * b.h > 24 ? 1 : 0));
+    case 'club': return 2;
+    case 'warehouse': return 2;
+    case 'factory': return 3;
+    case 'kiosk': return 1;
+    case 'ruin': return 1 + (r < 0.5 ? 1 : 0);
+    default: return 1;
+  }
 }
 
 export const STATION_COLORS = { arsenal: '#ff3f8e', clinic: '#3ddc84', locker: '#22e5ff', vault: '#ffd23f', garage: '#ff8a3d' };

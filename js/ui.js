@@ -61,7 +61,7 @@ export function createUI(root, cb) {
         </div>
       </div>
       <div class="controls-help">
-        <b>WASD</b> move · <b>MOUSE</b> aim · <b>LMB / RMB</b> left / right arm · <b>Q E R F</b> body mods · <b>V</b> vehicle ·
+        <b>WASD</b> move · <b>MOUSE</b> aim · <b>LMB / RMB</b> left / right arm · <b>Q E R F</b> body mods · <b>V</b> vehicle · <b>G</b> recruit ·
         <b>B</b> base / compound · <b>TAB</b> map + waypoints · <b>ENTER</b> chat · <b>ESC</b> menu
       </div>
     </div>
@@ -489,6 +489,7 @@ export function createUI(root, cb) {
     let hint = s.hint || '';
     if (!U.open) {
       if (s.nearVehicle) hint = `[V] ${s.nearVehicle}`;
+      else if (s.civPrompt) hint = '[G] Talk to this local: recruit them into your crew';
       else if (s.inBase) hint = '[B] BASE MENU — Arsenal · Clínica · Armário · Garagem · Cofre · Defesa';
       else if (s.nearCompound >= 0) hint = '[B] COMPOUND UPGRADES — turrets, walls, guards...';
     }
@@ -546,6 +547,11 @@ export function createUI(root, cb) {
       html += `<div class="turf-row"><b style="color:${s.gangColor}">${esc(s.gangName)}</b> <span>${owned}/${total}</span></div>`;
     }
     const rid = s.regionId;
+    if (rid >= 0 && s.me && s.me.rep !== undefined) {
+      const r = s.me.rep;
+      const [lbl, cls] = r >= 60 ? ['Friendly', 'good'] : r >= 30 ? ['Neutral', 'warn'] : ['Hostile', 'bad'];
+      html += `<div class="turf-row"><small>Locals</small> <span class="${cls}">${lbl} ${r}</span></div>`;
+    }
     if (rid >= 0) {
       const rs = s.rs[rid], R = U.world.regions[rid];
       if (rs.owner !== my) {
@@ -963,9 +969,10 @@ export function createUI(root, cb) {
         <div class="help">
           <p><b>WASD</b> move · <b>Mouse</b> aim · <b>LMB/RMB</b> left/right arm weapon</p>
           <p><b>Q / Space / Shift</b> dash · <b>E</b> nano-heal · <b>R</b> cloak · <b>F</b> shield</p>
-          <p><b>V</b> get in / out of a flying vehicle · <b>B</b> base or compound menu</p>
+          <p><b>V</b> get in / out of a flying vehicle · <b>G</b> recruit a local · <b>B</b> base or compound menu</p>
           <p><b>TAB</b> map + waypoints · <b>Enter</b> chat · <b>M</b> mute music</p>
         </div>
+        <button class="btn" data-set="quality">GRAPHICS: ${s && s.quality === 'low' ? 'LOW (faster)' : 'HIGH'}</button>
         ${s && s.isHost ? '<button class="btn" data-set="save">SAVE NOW</button>' : ''}
         <button class="btn danger" data-set="leave">${s && s.isHost ? 'SAVE & QUIT TO TITLE' : 'LEAVE GAME'}</button>
       </div>`);

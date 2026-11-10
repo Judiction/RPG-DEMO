@@ -380,6 +380,24 @@ export function followerSpec(gangColor, id, tier = 1) {
   };
 }
 
+// Civilians: everyday people of the city. Recruited ones wear the gang's color on an arm band (and maybe a bandana).
+const CIV_TOPS = ['#e8e4d8', '#3a5a8c', '#c84a3a', '#3ddc84', '#ffd23f', '#2b2b3a', '#ff8a3d', '#8a5ac8', '#5a8a9a', '#f0b8c8', '#6a4a3a', '#22a5c0'];
+const CIV_PANTS = ['#23243a', '#3a5a8c', '#6b4b2a', '#1d1d1d', '#5a2a4a', '#8a7a6a', '#2a4a3a'];
+export function civilianSpec(seed, gangColor = null) {
+  let s = (seed * 9301 + 49297) % 233280;
+  const r = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+  const pick = (a) => a[(r() * a.length) | 0];
+  const hair = pick(['buzz', 'afro', 'braids', 'long', 'cap', 'bald', 'bun', 'buzz', 'long']);
+  const spec = {
+    bulk: 0.9 + r() * 0.12, skin: pick(LOOK_OPTIONS.skin), hair, hairColor: pick(['#1a1414', '#4a2c1a', '#e3c16f', '#2a1a10', '#8a8a8a', '#d8d8d8', '#1a1414']),
+    top: pick(CIV_TOPS), pants: pick(CIV_PANTS), capColor: pick(CIV_TOPS), shoes: pick(['#1b1b24', '#f2f2f2', '#8a3a2a']),
+  };
+  if (r() < 0.2) spec.top2 = pick(CIV_TOPS);
+  if (r() < 0.15) spec.backpack = pick(['#3a3a46', '#8a3a2a', '#2a5a8a']);
+  if (gangColor) { spec.band = gangColor; if (r() < 0.5) { spec.mask = 'bandana'; spec.bandana = gangColor; } }
+  return spec;
+}
+
 // ------------------------------------------------------------------ sprite cache (characters)
 const charCache = new Map();
 export function charSprite(spec, dir, frame) {
@@ -729,6 +747,14 @@ function paintProp(type, v, frame) {
       for (let i = 0; i < 5; i++) E(3 + i * 5, 27, 3, 1, i % 2 ? '#1b1b24' : '#ffd23f');
     }
     return finish(o, 13, 28);
+  }
+  if (type === 'flood') {
+    // base floodlight tower
+    const o = pair(14, 44);
+    o.P(6, 8, 2, 36, '#3a3646'); o.P(6, 8, 1, 36, '#5a566a');
+    o.P(2, 2, 10, 6, '#2a2636'); o.E(3, 6, 8, 2, '#fff8e0'); o.P(2, 2, 10, 1, '#4e4a5c');
+    o.P(4, 42, 6, 2, '#2a2636');
+    return finish(o, 7, 43);
   }
   c = mk(4, 4); c.ax = 2; c.ay = 4;
   return c;
