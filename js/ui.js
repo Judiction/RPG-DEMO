@@ -6,6 +6,7 @@ import {
   GANG_COLORS, GANG_COLOR_NAMES, GANG_DEFAULT_NAMES, NAME_COLORS, BIOME_LABEL, MAX_WEAPON_LVL, weaponMult, weaponUpgradePrice,
   TILE, randomLook, MAP_TYPES, MAP_TYPE_IDS, MAP_SIZES, VEHICLES, VEHICLE_IDS, BATTERY_PRICE, TURRETS, TURRET_IDS,
   TURRET_MAX_MK, turretMult, turretUpgradePrice, COMPOUND_UPS, COMPOUND_UP_IDS, PVP_WIN_SHARE, FOLLOWER_MAX,
+  DRINKS, STIMS, ITEMS, BELT_SIZE, WANTED, BAD_BATCH,
 } from './data.js';
 import { T, generateWorld, mapImageData } from './world.js';
 import { charSprite, armSprite, playerSpec, mk, turretHead, vehicleSprite } from './sprites.js';
@@ -62,7 +63,7 @@ export function createUI(root, cb) {
       </div>
       <div class="controls-help">
         <b>WASD</b> move · <b>MOUSE</b> aim · <b>LMB / RMB</b> left / right arm · <b>Q E R F</b> body mods · <b>V</b> vehicle · <b>G</b> recruit ·
-        <b>B</b> base / compound · <b>TAB</b> map + waypoints · <b>ENTER</b> chat · <b>ESC</b> menu
+        <b>B</b> base / compound · <b>1 2 3</b> drinks · <b>T</b> dance · <b>TAB</b> map + waypoints · <b>ENTER</b> chat · <b>ESC</b> menu
       </div>
     </div>
   </div>
@@ -74,6 +75,7 @@ export function createUI(root, cb) {
       <div class="bar xp"><div class="fill" id="h-xp"></div><span id="h-xpt"></span></div>
       <div class="cash-row"><span class="cash" id="h-cash">R$0</span><span class="vault" title="Gang vault (compound income)">COFRE <b id="h-vault">R$0</b></span></div>
       <div class="extra-row" id="h-extra"></div>
+      <div class="wanted" id="wanted"></div>
     </div>
     <div class="hud-tr">
       <div class="panel slim mm-wrap"><canvas id="minimap" width="150" height="150"></canvas><div class="mm-label" id="mm-label"></div></div>
@@ -85,6 +87,7 @@ export function createUI(root, cb) {
     </div>
     <div class="hud-bottom">
       <div class="veh-panel panel slim hidden" id="veh"></div>
+      <div class="belt-row"><div class="buffs" id="buffs"></div><div class="belt" id="belt"></div></div>
       <div class="hotbar" id="hotbar"></div>
       <div class="hint" id="hint"></div>
     </div>
@@ -425,6 +428,33 @@ export function createUI(root, cb) {
     return u;
   }
   const ABIL_ICON = { Q: '»', E: '+', R: '◌', F: '⬡' };
+  const itemIcons = new Map();
+  // tiny pixel art for each drink / stim
+  function itemIcon(id) {
+    if (itemIcons.has(id)) return itemIcons.get(id);
+    const I = ITEMS[id];
+    const c = mk(16, 16), g = c.getContext('2d');
+    const P = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+    const col = I.c, glass = 'rgba(200,232,255,0.55)', rim = '#e8f4ff';
+    switch (id) {
+      case 'caipirinha': P(4, 5, 8, 9, glass); P(5, 8, 6, 5, col); P(4, 5, 8, 1, rim); P(9, 3, 4, 3, '#3ddc84'); P(10, 4, 2, 1, '#a0ffc0'); P(6, 9, 2, 2, '#ffffff'); break;
+      case 'guarana': P(5, 2, 6, 12, col); P(5, 2, 6, 1, '#c8c8d0'); P(5, 13, 6, 1, '#8a8a96'); P(6, 6, 4, 3, '#3ddc84'); P(7, 7, 2, 1, '#ffd23f'); break;
+      case 'acai': P(3, 8, 10, 5, '#5a3424'); P(3, 7, 10, 2, col); P(5, 6, 2, 2, '#ffffff'); P(9, 6, 2, 1, '#ff3fa4'); P(4, 13, 8, 1, '#3a2016'); break;
+      case 'cerveja': P(6, 1, 4, 3, '#3a2a10'); P(5, 4, 6, 10, '#8a5a10'); P(6, 7, 4, 4, col); P(6, 4, 1, 9, '#c88a30'); break;
+      case 'chopp': P(3, 4, 8, 10, col); P(3, 3, 8, 2, '#ffffff'); P(11, 6, 2, 6, glass); P(4, 6, 1, 7, '#ffe0a0'); break;
+      case 'coco': P(3, 6, 10, 8, '#3ddc84'); P(4, 5, 8, 2, '#5aef9a'); P(7, 2, 1, 5, '#ff3fa4'); P(8, 2, 3, 1, '#ff3fa4'); P(4, 9, 2, 2, '#2aa860'); break;
+      case 'porosa': P(4, 4, 8, 10, 'rgba(230,230,240,0.7)'); P(5, 8, 6, 5, col); P(4, 4, 8, 1, '#ff3b5c'); P(6, 9, 2, 1, '#ffffff'); break;
+      case 'balao': P(4, 2, 8, 8, col); P(5, 1, 6, 1, col); P(5, 10, 6, 1, col); P(5, 3, 2, 2, '#ffffff'); P(7, 11, 2, 1, '#8a8a96'); P(8, 12, 1, 3, '#c8c8d0'); break;
+      case 'pedra': P(5, 4, 6, 8, col); P(4, 6, 8, 4, col); P(6, 5, 2, 2, '#c8e8ff'); P(9, 9, 2, 2, '#2a3a8a'); break;
+      case 'lolo': P(5, 2, 6, 2, '#c8c8d0'); P(4, 4, 8, 10, 'rgba(255,220,120,0.6)'); P(5, 8, 6, 5, col); P(4, 4, 8, 1, rim); P(1, 10, 4, 4, '#f2f2f2'); break;
+      case 'bala': P(3, 5, 5, 6, col); P(8, 5, 5, 6, '#ffffff'); P(4, 4, 8, 1, '#ffd0a0'); P(4, 11, 8, 1, '#c8c8d0'); P(5, 6, 2, 1, '#ffffff'); break;
+      default: P(3, 3, 10, 10, col); P(4, 4, 8, 8, '#2aa860'); P(6, 6, 4, 4, '#ffd23f'); P(7, 7, 2, 2, '#ff3fa4'); break;
+    }
+    const url = c.toDataURL();
+    itemIcons.set(id, url);
+    return url;
+  }
+  const fmtT = (t) => (t >= 60 ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}` : `${Math.ceil(t)}s`);
 
   // ---------------------------------------------------------------- HUD update
   U.update = (s, now) => {
@@ -467,7 +497,36 @@ export function createUI(root, cb) {
       }
       const hb = $('#hotbar');
       if (hb._html !== html) { hb.innerHTML = html; hb._html = html; }
+      hb.classList.toggle('hidden', !!s.barName);
     }
+    // belt (3 slots) and active effects
+    const belt = me.belt || [];
+    let bh = '';
+    for (let i = 0; i < BELT_SIZE; i++) {
+      const id = belt[i];
+      bh += id ? `<div class="bslot" title="${esc(ITEMS[id].name)}: ${esc(ITEMS[id].desc)}" style="border-color:${ITEMS[id].c}"><img src="${itemIcon(id)}"><span class="key">${i + 1}</span></div>` : `<div class="bslot empty"><span class="key">${i + 1}</span></div>`;
+    }
+    const be = $('#belt'); if (be._h !== bh) { be.innerHTML = bh; be._h = bh; }
+    let fh = '';
+    for (const [id, t] of me.buffs || []) { const I = ITEMS[id]; if (I) fh += `<div class="buff" style="border-color:${I.c}" title="${esc(I.name)}: ${esc(I.desc)}"><img src="${itemIcon(id)}"><span>${fmtT(t)}</span></div>`; }
+    if (me.poison > 0) fh += `<div class="buff poison" title="Bad batch: losing HP (never below 1). Água de Coco cures it."><span class="pz">☠</span><span>${Math.ceil(me.poison)}s</span></div>`;
+    const bf = $('#buffs'); if (bf._h !== fh) { bf.innerHTML = fh; bf._h = fh; }
+    // wanted level: full stars + the next one filling up
+    const heat = me.heat || 0;
+    let wh = '';
+    if (heat > 0 || me.cops > 0) {
+      const full = Math.floor(heat / 100), part = (heat % 100) / 100;
+      let st = '';
+      for (let i = 0; i < 5; i++) st += i < full ? '<i class="st on">★</i>' : i === full && part > 0 ? `<i class="st part" style="--p:${Math.round(part * 100)}%">★</i>` : '<i class="st">★</i>';
+      let sub = '';
+      if (me.bar >= 0) sub = 'hiding in the bar — the cops wait outside';
+      else if (me.safe) sub = 'safe at the QG — pay them off in the base menu (B)';
+      else if (me.cops > 0) sub = me.esc > 0 ? `losing them... ${Math.round(100 * me.esc / WANTED.escapeTime)}%` : 'police response — fight or run';
+      else sub = 'witnesses saw you';
+      wh = `<div class="wstars ${me.cops > 0 ? 'hot' : ''}">${st}</div><div class="wsub">${sub}</div>`;
+      if (me.cops > 0 && me.esc > 0) wh += `<div class="bar esc"><div class="fill" style="width:${Math.min(100, 100 * me.esc / WANTED.escapeTime).toFixed(0)}%"></div></div>`;
+    } else if (me.safe) wh = '<div class="wsub safe">SAFE ZONE — weapons holstered</div>';
+    const we = $('#wanted'); if (we._h !== wh) { we.innerHTML = wh; we._h = wh; }
     // vehicle panel
     const vp = $('#veh');
     if (s.vehicle) {
@@ -488,9 +547,10 @@ export function createUI(root, cb) {
     }
     let hint = s.hint || '';
     if (!U.open) {
-      if (s.nearVehicle) hint = `[V] ${s.nearVehicle}`;
+      if (s.ctxHint) hint = s.ctxHint;
+      else if (s.nearVehicle) hint = `[V] ${s.nearVehicle}`;
       else if (s.civPrompt) hint = '[G] Talk to this local: recruit them into your crew';
-      else if (s.inBase) hint = '[B] BASE MENU — Arsenal · Clínica · Armário · Garagem · Cofre · Defesa';
+      else if (s.inBase) hint = '[B] BASE MENU — or walk up to a building: Arsenal · Clínica · Armário · Cofre · Garagem';
       else if (s.nearCompound >= 0) hint = '[B] COMPOUND UPGRADES — turrets, walls, guards...';
     }
     $('#hint').textContent = hint;
@@ -511,6 +571,7 @@ export function createUI(root, cb) {
     if (cl) cl.onclick = () => cb.copyInvite();
     if (U.open === 'base') renderBase(false);
     if (U.open === 'compound') renderCompound(false);
+    if (U.open === 'shop') renderShop(false);
     if (U.open === 'map') drawBigMap();
   };
 
@@ -809,7 +870,7 @@ export function createUI(root, cb) {
     const prof = s.prof, cash = s.me.cash;
     const pm = 1 - 0.08 * ((s.up && s.up.market) || 0);
     const baseR = s.regionId;
-    const key = JSON.stringify([baseTab, prof, cash, s.vault, s.up, s.inBase, s.me.bat, baseTab === 'defense' ? s.rs[baseR] : 0, (s.vehicles || []).length]);
+    const key = JSON.stringify([baseTab, prof, cash, s.vault, s.up, s.inBase, s.me.bat, baseTab === 'defense' ? s.rs[baseR] : 0, (s.vehicles || []).length, Math.ceil((s.me.heat || 0) / 100)]);
     const inner = $('#modal-inner');
     if (!force && inner._key === key) return;
     inner._key = key;
@@ -881,7 +942,40 @@ export function createUI(root, cb) {
     inner.innerHTML = `<div class="panel-title">${esc(baseR >= 0 ? U.world.regions[baseR].name.toUpperCase() : 'QG')} — BASE <span class="money-top">${money(cash)}</span><span class="close" data-close>✕</span></div>
       <div class="tabs">${tabs.map(([k, n, d]) => `<button class="tab ${k === baseTab ? 'on' : ''}" data-tab="${k}">${n}<small>${d}</small></button>`).join('')}</div>
       ${s.inBase ? '' : '<div class="warnbar">You are away from the base — go back to the QG to buy or change arms.</div>'}
+      ${s.me.heat > 0 ? `<div class="warnbar cops">★ WANTED ${'★'.repeat(Math.ceil(s.me.heat / 100 - 0.001))} — pay the police to forget you <button class="btn small" data-a="bribe" ${!s.inBase || cash < Math.ceil(s.me.heat / 100 - 0.001) * WANTED.bribe ? 'disabled' : ''}>PAY OFF · ${money(Math.ceil(s.me.heat / 100 - 0.001) * WANTED.bribe)}</button></div>` : ''}
       <div class="tab-body">${body}</div>`;
+  }
+
+  // ---------------------------------------------------------------- bar shops (drinks at the counter, stims from the dealer)
+  U.openShop = (kind, bar) => {
+    U.shopKind = kind; U.shopBar = bar;
+    openModal('shop', '');
+    renderShop(true);
+  };
+  function renderShop(force) {
+    const s = U.state;
+    if (!s || !s.me) return;
+    const kind = U.shopKind, bar = U.shopBar;
+    const cash = s.me.cash, belt = s.me.belt || [];
+    const key = JSON.stringify([kind, cash, belt]);
+    const inner = $('#modal-inner');
+    if (!force && inner._key === key) return;
+    inner._key = key;
+    const list = kind === 'stims' ? STIMS : DRINKS;
+    const full = !belt.includes(null);
+    let body = kind === 'stims'
+      ? `<p class="tab-intro">"Psiu... quer algo mais forte?" Street cyber stims: stronger and longer than any drink, but <b>${Math.round(BAD_BATCH.chance * 100)}% are a bad batch</b> (poison for ${BAD_BATCH.t}s; it never kills you).</p>`
+      : '<p class="tab-intro">Drinks go on your <b>belt</b> (3 slots, kept when you die). Use them any time with <b>1 2 3</b>. Different effects stack; the same one refreshes.</p>';
+    body += `<div class="beltview">BELT ${belt.map((id, i) => (id ? `<span class="bv" style="border-color:${ITEMS[id].c}"><img src="${itemIcon(id)}">${i + 1}</span>` : `<span class="bv empty">${i + 1}</span>`)).join('')}</div><div class="cards">`;
+    for (const id in list) {
+      const I = list[id];
+      const dur = I.t ? fmtT(I.t) : 'instant';
+      body += `<div class="card item ${kind}"><img class="iimg" src="${itemIcon(id)}"><div class="c-name" style="color:${I.c}">${esc(I.name)}</div><div class="c-desc">${esc(I.desc)}</div><div class="c-stats">${dur}</div>
+        <button class="btn" data-a="buy" data-item="${id}" ${full || cash < I.price ? 'disabled' : ''}>${full ? 'BELT FULL' : 'BUY · ' + money(I.price)}</button></div>`;
+    }
+    body += '</div>';
+    const title = kind === 'stims' ? 'DEALER — STIMS' : `${esc((bar && bar.name ? bar.name : 'BAR').toUpperCase())} — BALCÃO`;
+    inner.innerHTML = `<div class="panel-title">${title} <span class="money-top">${money(cash)}</span><span class="close" data-close>✕</span></div><div class="tab-body">${body}</div>`;
   }
 
   // ---------------------------------------------------------------- compound upgrades
@@ -946,7 +1040,7 @@ export function createUI(root, cb) {
       const d = b.dataset;
       const a = { t: d.a };
       if (d.w) a.w = d.w; if (d.m) a.m = d.m; if (d.u) a.u = d.u; if (d.slot) a.slot = d.slot; if (d.v) a.v = d.a === 'buyV' ? d.v : Number(d.v);
-      if (d.r) a.r = Number(d.r); if (d.s) a.s = Number(d.s); if (d.type) a.type = d.type;
+      if (d.r) a.r = Number(d.r); if (d.s) a.s = Number(d.s); if (d.type) a.type = d.type; if (d.item) a.item = d.item;
       cb.onAction(a);
       cb.sound('click');
     }
@@ -969,7 +1063,9 @@ export function createUI(root, cb) {
         <div class="help">
           <p><b>WASD</b> move · <b>Mouse</b> aim · <b>LMB/RMB</b> left/right arm weapon</p>
           <p><b>Q / Space / Shift</b> dash · <b>E</b> nano-heal · <b>R</b> cloak · <b>F</b> shield</p>
-          <p><b>V</b> get in / out of a flying vehicle · <b>G</b> recruit a local · <b>B</b> base or compound menu</p>
+          <p><b>V</b> get in / out of a flying vehicle · <b>G</b> recruit a local · <b>B</b> base or compound menu (stand at a QG building to open its shop)</p>
+          <p><b>E</b> at a bar door to go in · <b>B</b> at the counter or the dealer · <b>1 2 3</b> use belt items · <b>T</b> dance</p>
+          <p>Crimes that people see raise your <b>wanted stars</b>. Lose the cops, beat their response, or pay them off at the QG. Inside the QG walls nobody can shoot.</p>
           <p><b>TAB</b> map + waypoints · <b>Enter</b> chat · <b>M</b> mute music</p>
         </div>
         <button class="btn" data-set="quality">GRAPHICS: ${s && s.quality === 'low' ? 'LOW (faster)' : 'HIGH'}</button>

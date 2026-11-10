@@ -43,7 +43,10 @@ Next time, the host loads the game from the title screen and friends rejoin as t
 | **F** | Kinetic Shield *(needs Kinetic Shield)* |
 | **V** | Get in / out of a flying vehicle |
 | **G** | Talk to a civilian: recruit them into your crew |
-| **B** | Base menu (at your QG) or compound upgrades (near the core of a district you own) |
+| **B** | Base menu (at your QG — stand at a building's door to open that shop), compound upgrades (near the core of a district you own), or the bar counter / dealer |
+| **E** | At a bar door: go inside |
+| **1 / 2 / 3** | Use the drink or stim in that belt slot |
+| **T** | Dance (passinho, crip walk or rebolado — you can't move or shoot until it ends) |
 | **TAB** | Territory map: click to place your waypoint, click a district to see / upgrade it |
 | **Enter** | Chat |
 | **ESC** | Menu: invite link, volume, graphics quality, save, quit |
@@ -100,7 +103,10 @@ transformers and cars are great for that.
 - **Enemies that kill anyone level up** (players, guards, crew, turrets): they grow into the next, bigger tier and get a ★.
 
 ### The base (QG)
-Walk into your HQ and press **B**:
+Your QG is a walled fortress in your gang's color with a building for each shop: **Arsenal, Clínica, Armário and Cofre**
+(plus the **Garagem** yard). Walk up to a building's door and press **B** to open that shop, or press **B** anywhere
+inside for the full menu. Inside the QG walls you are **safe**: nobody can shoot, enemies and police won't come for you,
+and the cops wait outside. (During a raid on the QG the safe zone switches off — defend it!)
 - **ARSENAL** buys new **cyber-arms** (weapons) and upgrades them up to Mk5.
 - **CLÍNICA** installs **body mods**. They change how your character looks and plays:
   *Subdermal Armor* (HP, less damage), *Leg Servos* (speed, Dash), *Nanite Regen* (regen, Nano-Heal),
@@ -111,6 +117,40 @@ Walk into your HQ and press **B**:
   Guard Training, More Recruits, Business Network (income), Bounty Board (+cash per kill),
   Black Market (cheaper shops), Informants (earlier raid warnings), Rescue Squad (faster respawn).
 - **DEFESA** puts turrets and upgrades on the base itself.
+- **Pay off the police**: if you have wanted stars, the base menu lets you pay R$350 per star to clear them.
+
+### Flags and capturing
+Every district has a holographic flag floating over its core, waving in the owner's color, with a capture ring around it.
+Take a district and the walls and flag repaint themselves in your gang color in a wave from the flag outward.
+Smaller districts are **gang outposts**: little favela shacks in the corners, bunting strung across the yard and the flag in the middle.
+
+### Police (wanted stars)
+- Crimes that **civilians see** raise your heat: shooting near people, hurting or killing civilians, explosions, hitting cops.
+  Every 100 heat is a ★, up to 5.
+- Each new star sends the **Polícia Militar 2099** in flying patrol cars. More stars, heavier units: soldiers, shotguns,
+  riot squads, police drones and finally the riot mech.
+- Three ways out: **beat the response** (kill every cop that came — stars go to zero), **lose them** (stay far from every cop
+  until the escape bar fills), or **pay them off** at your QG. Stars also fade slowly when nobody is chasing you.
+  Hiding in a bar or at the QG freezes your stars — the cops wait outside.
+
+### Bars, drinks and stims
+- Bars are marked by a neon cocktail sign and a lit doorway. Press **E** at the door (or walk into it) to go inside:
+  a DJ plays live electronic music, people dance, and the bartender sells drinks at the **counter (B)**.
+- Drinks last a few minutes, so you drink and head back out powered up:
+
+| Drink | Effect | Price |
+| --- | --- | --- |
+| Caipirinha Neon | +20% damage, 3 min | R$260 |
+| Guaraná Volt | +25% speed, 3 min | R$220 |
+| Açaí Nanotech | heal 40% + regen, 2 min | R$240 |
+| Cerveja Cromada | −15% damage taken, 3 min (a bit tipsy) | R$200 |
+| Chopp Turbo | +25% fire rate, 2.5 min | R$300 |
+| Água de Coco | cures poison and burning, small heal | R$90 |
+
+- Some bars have a **dealer** in the back selling stronger, pricier **cyber stims** — *Pó Rosa, Balão, Pedra Azul, Loló, Bala,
+  Doce* — but **20% are a bad batch** that poisons you for 20s (it never takes you below 1 HP).
+- Everything goes on your **belt** (3 slots, kept when you die). Use them with **1 2 3**. Different effects stack;
+  taking the same one again refreshes it.
 
 ### Compound upgrades (every district you own)
 | Upgrade | What it does |
@@ -213,7 +253,7 @@ js/audio.js       synthesized sound effects + vehicle engine
 js/net.js         PeerJS wrapper (rooms, codes, message chunking)
 js/input.js       keyboard + mouse
 js/font.js        tiny bitmap font for in-world text
-js/data.js        weapons, mods, vehicles, turrets, upgrades, factions, brands, prices — tweak balance here
+js/data.js        weapons, mods, vehicles, turrets, upgrades, factions, drinks/stims, police, prices — tweak balance here
 js/rng.js         seeded random + noise
 ```
 

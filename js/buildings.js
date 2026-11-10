@@ -107,7 +107,7 @@ function signVertical(S, B, x, y0, y1, anim) {
 }
 
 // ------------------------------------------------------------------ walls
-function paintWall(b, side, len, rnd) {
+function paintWall(b, side, len, rnd, tint = '#ff3f8e') {
   const H = b.H;
   const S = surface(len, H);
   const { P } = S;
@@ -116,6 +116,87 @@ function paintWall(b, side, len, rnd) {
   const floorY = (f) => 4 + f * F;                       // top of floor f (0 = top floor)
   const st = b.style;
   const pick = (a) => a[(rnd() * a.length) | 0];
+  if (st === 'cwall') {
+    // compound wall: concrete panels with the owner's color band and lights
+    const big = H >= 18;
+    P(0, 0, len, H, '#4a4656');
+    for (let x = 0; x < len; x += 16) { P(x, 0, 1, H, '#3a3646'); P(x + 1, 0, 1, H, '#5a566a'); }
+    speckle(P, rnd, 0, 0, len, H, len / 2, ['#423e4e', '#56526a']);
+    P(0, 0, len, 2, '#8a8698'); P(0, 2, len, 1, '#2a2636');
+    P(0, big ? 5 : 4, len, big ? 4 : 3, shade(tint, -0.25));
+    S.E(0, big ? 6 : 5, len, 1, tint);
+    for (let x = 6; x < len; x += 16) S.E(x, big ? 12 : 9, 2, 1, shade(tint, 0.4));
+    if (big) for (let x = 0; x < len; x += 6) P(x, H - 3, 3, 2, x % 12 ? '#141018' : '#ffd23f');
+    if (rnd() < 0.4) tag(S, rnd, 3 + ((rnd() * Math.max(1, len - 20)) | 0), H - (big ? 9 : 7), 18);
+    groundLine(S);
+    return S;
+  }
+  if (st === 'hq') {
+    // main-base building: dark armored walls, gang-color trims, a big lit door facing the yard
+    const K = { arsenal: '#ff3f8e', clinic: '#3ddc84', locker: '#22e5ff', vault: '#ffd23f' }[b.kind] || '#fff';
+    P(0, 0, len, H, '#2e2a3a');
+    for (let x = 0; x < len; x += 8) P(x, 0, 1, H, '#26222f');
+    cornice(S, '#3e3a4e');
+    S.E(0, 4, len, 1, tint);
+    for (let f = 0; f < fl; f++) {
+      const y0 = floorY(f);
+      P(0, floorY(f + 1) - 1, len, 1, '#1e1a28');
+      if (f < fl - 1) for (let x = 4; x < len - 6; x += 9) win(S, x, y0 + 3, 6, 4, 1.4, '#1a1622');
+    }
+    const doorSide = b.doorN ? 'N' : 'S';
+    if (side === doorSide) {
+      const dw = Math.min(len - 8, 22), dx = ((len - dw) / 2) | 0;
+      P(dx - 2, H - 15, dw + 4, 15, '#1a1622');
+      S.E(dx, H - 13, dw, 13, shade(K, -0.55));
+      for (let y = H - 12; y < H; y += 2) P(dx, y, dw, 1, 'rgba(0,0,0,0.25)');
+      S.E(dx - 2, H - 15, dw + 4, 1, K); S.E(dx - 2, H - 15, 1, 15, K); S.E(dx + dw + 1, H - 15, 1, 15, K);
+      for (let x = 0; x < len; x += 4) P(x, H - 2, 2, 2, x % 8 ? '#141018' : '#ffd23f');
+    } else if (rnd() < 0.6) pipe(S, len - 4, 4, H);
+    S.E(0, H - 1, len, 1, shade(tint, -0.2));
+    return S;
+  }
+  if (st === 'shack') {
+    // outpost shack: patched plaster + corrugated metal, gang tag in the owner's color
+    const col = pick(['#b8a088', '#c89a7a', '#8aa0a8', '#a8b090', '#c8b8a0', '#9a8070']);
+    P(0, 0, len, H, col);
+    speckle(P, rnd, 0, 0, len, H, len, [shade(col, -0.1), shade(col, 0.08)]);
+    if (rnd() < 0.5) bricks(S, rnd, 0, H / 2, len, H / 2, '#a0583a');
+    for (let x = (rnd() * 8) | 0; x < len - 6; x += 12) { P(x, 3, 8, H - 6, '#7a8090'); for (let xx = x; xx < x + 8; xx += 2) P(xx, 3, 1, H - 6, '#5a606e'); }
+    cornice(S, col);
+    for (let x = 3; x < len - 4; x += 9) win(S, x, 6, 3, 4, 1.2, '#3a2a2a');
+    if (side === (b.doorN ? 'N' : 'S')) { const d = (len / 2 - 3) | 0; P(d, H - 10, 6, 10, '#2a1e1e'); S.E(d + 1, H - 10, 4, 1, '#ffd88a'); }
+    // painted gang tag (owner color)
+    let xx = 2 + ((rnd() * 4) | 0);
+    for (let i = 0; i < 4 && xx < len - 4; i++) { const hh = 3 + ((rnd() * 3) | 0); P(xx, H - 8, 1, hh, tint); P(xx, H - 8, 3, 1, tint); if (rnd() < 0.5) P(xx + 2, H - 8, 1, hh, tint); xx += 4; }
+    groundLine(S);
+    return S;
+  }
+  if (st === 'bar') {
+    const col = pick(['#2a1838', '#1d1028', '#2a2030', '#3a1a28']);
+    P(0, 0, len, H, col);
+    bricks(S, rnd, 0, 4, len, H - 4, shade(col, 0.15));
+    cornice(S, '#3a2a4a');
+    for (let f = 0; f < fl - 1; f++) for (let x = 4; x < len - 5; x += 8) win(S, x, floorY(f) + 3, 4, 5, 1.5, '#1a1020');
+    if (side === 'S') {
+      const name = (b.barName || 'BAR').toUpperCase();
+      const tw = Math.min(len - 6, name.length * 4 + 4);
+      const y = H - 26;
+      P(((len - tw) / 2 | 0) - 2, y - 1, tw + 4, 10, '#0c0814');
+      for (let i = 0; i < tw + 4; i += 2) { S.E(((len - tw) / 2 | 0) - 2 + i, y - 1, 1, 1, i % 4 ? '#ff3fa4' : '#ffd23f', i % 4 ? '#ffd23f' : '#ff3fa4'); S.E(((len - tw) / 2 | 0) - 2 + i, y + 8, 1, 1, i % 4 ? '#22e5ff' : '#ff3fa4', i % 4 ? '#ff3fa4' : '#22e5ff'); }
+      const t0 = textSprite(name.slice(0, Math.floor((tw - 2) / 4)), '#ff3fa4', null), t1 = textSprite(name.slice(0, Math.floor((tw - 2) / 4)), '#22e5ff', null);
+      const tx = ((len - t0.width) / 2) | 0;
+      S.g.drawImage(t0, tx, y + 2); S.g0.drawImage(t0, tx, y + 2); S.g1.drawImage(t1, tx, y + 2);
+      const d = (len / 2 - 4) | 0;
+      P(d - 1, H - 13, 10, 13, '#0a0610');
+      S.E(d, H - 12, 8, 12, '#3a1040', '#10304a');
+      S.E(d - 1, H - 13, 10, 1, '#ff3fa4', '#22e5ff');
+      // posters
+      for (const px of [3, len - 9]) { P(px, H - 14, 6, 8, pick(['#ff3f8e', '#ffd23f', '#22e5ff', '#3ddc84'])); P(px + 1, H - 12, 4, 1, '#120a1c'); P(px + 1, H - 10, 3, 1, '#120a1c'); }
+      S.anim = true;
+    }
+    groundLine(S);
+    return S;
+  }
   if (st === 'container') {
     const col = CONTAINER[b.seed % CONTAINER.length];
     P(0, 0, len, H, col); P(0, 0, len, 1, shade(col, 0.35)); P(0, H - 1, len, 1, shade(col, -0.45));
@@ -282,7 +363,7 @@ function addSigns(b, S, rnd) {
 }
 
 // ------------------------------------------------------------------ roofs
-function paintRoof(b, rnd) {
+function paintRoof(b, rnd, tint = '#ff3f8e') {
   const W = b.w * TILE, D = b.h * TILE;
   const S = surface(W, D);
   const { P } = S;
@@ -296,6 +377,61 @@ function paintRoof(b, rnd) {
   const solar = (x, y, w) => { for (let i = 0; i + 4 <= w; i += 5) { P(x + i, y, 4, 7, '#1d2a5a'); P(x + i, y, 4, 1, '#5a7ad8'); P(x + i + 2, y, 1, 7, '#2a3a7a'); } };
   const antenna = (x, y) => { P(x, y, 1, 1, '#c8c8d0'); P(x - 1, y + 1, 3, 1, '#56606e'); S.blinks.push({ x, y }); };
   S.blinks = [];
+  if (st === 'cwall') {
+    P(0, 0, W, D, '#6a6676');
+    P(0, 0, W, 1, '#8a8698'); P(0, D - 1, W, 1, '#3a3646'); P(0, 0, 1, D, '#7a7688'); P(W - 1, 0, 1, D, '#3a3646');
+    const along = W > D;
+    if (along) { S.E(0, (D / 2) | 0, W, 1, tint); for (let x = 2; x < W; x += 6) P(x, 2, 2, 1, '#9a96a8'); }
+    else { S.E((W / 2) | 0, 0, 1, D, tint); for (let y = 2; y < D; y += 6) P(2, y, 1, 2, '#9a96a8'); }
+    if (b.H >= 18) for (let i = 4; i < (along ? W : D); i += 16) { if (along) S.E(i, 2, 2, 2, '#fff2c0'); else S.E(2, i, 2, 2, '#fff2c0'); }
+    return S;
+  }
+  if (st === 'hq') {
+    const K = { arsenal: '#ff3f8e', clinic: '#3ddc84', locker: '#22e5ff', vault: '#ffd23f' }[b.kind] || '#fff';
+    const col = '#2e2a3a';
+    P(0, 0, W, D, col);
+    speckle(P, rnd, 0, 0, W, D, W * D / 12, ['#28242f', '#36324a']);
+    parapet(col);
+    S.E(1, 1, W - 2, 1, tint); S.E(1, D - 2, W - 2, 1, tint); S.E(1, 1, 1, D - 2, tint); S.E(W - 2, 1, 1, D - 2, tint);
+    // big painted emblem of the building's job
+    const cx = (W / 2) | 0, cy = (D / 2) | 0, r = Math.min(W, D) / 2 - 5;
+    for (let a = 0; a < 40; a++) { const an = a / 40 * Math.PI * 2; S.E(Math.round(cx + Math.cos(an) * r), Math.round(cy + Math.sin(an) * r), 1, 1, K); }
+    const icon = { arsenal: 'star', clinic: 'cross', locker: 'box', vault: 'coin' }[b.kind] || 'star';
+    drawLogo((x, y, w, h, c) => S.E(x, y, w, h, c), icon, cx - 7, cy - 7, K, shade(K, 0.4), 2);
+    for (let i = 0; i < 2; i++) { const x = 4 + i * (W - 16), y = D - 10; P(x, y, 8, 6, '#c8c8d0'); P(x + 2, y + 2, 4, 3, '#5a5a66'); }
+    S.blinks.push({ x: W - 4, y: 3 });
+    return S;
+  }
+  if (st === 'shack') {
+    const col = pick(['#8a8494', '#7a8090', '#9a7a5a']);
+    P(0, 0, W, D, col);
+    for (let x = 0; x < W; x += 3) { P(x, 0, 1, D, shade(col, -0.2)); P(x + 1, 0, 1, D, shade(col, 0.1)); }
+    for (let i = 0; i < 2; i++) P(rnd() * (W - 8), rnd() * (D - 6), 6 + rnd() * 6, 4 + rnd() * 4, rnd() < 0.5 ? '#8a5a3a' : '#5a6a7a');
+    // tarp in the owner's color + a little flag
+    const tw = Math.min(W - 4, 14), th = Math.min(D - 4, 9), tx = 2 + ((rnd() * (W - tw - 4)) | 0), ty = 2 + ((rnd() * (D - th - 4)) | 0);
+    P(tx, ty, tw, th, shade(tint, -0.25)); P(tx, ty, tw, 1, shade(tint, 0.2)); for (let x = tx + 3; x < tx + tw; x += 4) P(x, ty, 1, th, shade(tint, -0.4));
+    if (rnd() < 0.6) { P(W - 8, D - 8, 6, 5, '#1d1d24'); P(W - 7, D - 7, 4, 3, '#2a2a36'); }
+    parapet(col);
+    return S;
+  }
+  if (st === 'bar') {
+    const col = '#2a2036';
+    P(0, 0, W, D, col);
+    speckle(P, rnd, 0, 0, W, D, W * D / 14, ['#241c30', '#342a44']);
+    parapet(col);
+    // rooftop neon sign with a cocktail glass, readable from above
+    const name = (b.barName || 'BAR').toUpperCase().slice(0, Math.floor((W - 22) / 4));
+    const bw = Math.min(W - 6, name.length * 4 + 20), bx = ((W - bw) / 2) | 0, by = Math.max(3, ((D - 14) / 2) | 0);
+    P(bx, by, bw, 13, '#0c0814');
+    S.E(bx, by, bw, 1, '#ff3fa4', '#22e5ff'); S.E(bx, by + 12, bw, 1, '#ff3fa4', '#22e5ff'); S.E(bx, by, 1, 13, '#ff3fa4', '#22e5ff'); S.E(bx + bw - 1, by, 1, 13, '#ff3fa4', '#22e5ff');
+    const gx = bx + 4, gy = by + 3;
+    S.E(gx, gy, 9, 1, '#22e5ff'); S.E(gx + 1, gy + 1, 7, 1, '#22e5ff'); S.E(gx + 2, gy + 2, 5, 1, '#ff3fa4'); S.E(gx + 3, gy + 3, 3, 1, '#22e5ff'); S.E(gx + 4, gy + 4, 1, 3, '#22e5ff'); S.E(gx + 2, gy + 7, 5, 1, '#22e5ff'); S.E(gx + 7, gy - 1, 1, 2, '#3ddc84');
+    const t0 = textSprite(name, '#ffd23f', null), t1 = textSprite(name, '#ff3fa4', null);
+    S.g.drawImage(t0, bx + 16, by + 4); S.g0.drawImage(t0, bx + 16, by + 4); S.g1.drawImage(t1, bx + 16, by + 4);
+    S.anim = true;
+    for (let i = 0; i < 2; i++) { const x = 4 + i * (W - 14), y = D - 9; P(x, y, 9, 6, '#c8c8d0'); P(x + 2, y + 2, 5, 3, '#5a5a66'); }
+    return S;
+  }
   if (st === 'container') {
     const col = CONTAINER[b.seed % CONTAINER.length];
     P(0, 0, W, D, shade(col, 0.1));
@@ -442,27 +578,32 @@ function paintRoof(b, rnd) {
 }
 
 // ------------------------------------------------------------------ art + bake
-export function buildingArt(b) {
-  if (b._art) return b._art;
+export function buildingArt(b, tint = null) {
+  if (tint) {
+    b._arts = b._arts || {};
+    if (b._arts[tint]) return (b._art = b._arts[tint]);
+  } else if (b._art) return b._art;
   const rnd = rngOf(b.seed);
   const W = b.w * TILE, D = b.h * TILE;
   const walls = {};
   for (const side of ['S', 'N', 'E', 'W']) {
-    const S = paintWall(b, side, side === 'S' || side === 'N' ? W : D, rngOf(b.seed + side.charCodeAt(0) * 977));
+    const S = paintWall(b, side, side === 'S' || side === 'N' ? W : D, rngOf(b.seed + side.charCodeAt(0) * 977), tint || '#ff3f8e');
     if (side === 'S') addSigns(b, S, rnd);
     walls[side] = S;
   }
-  const roof = paintRoof(b, rnd);
+  const roof = paintRoof(b, rnd, tint || '#ff3f8e');
   const anim = b.sign ? b.sign.anim : b.board ? b.board.anim : 'steady';
-  const litMul = { tower: 1.25, apartment: 1.1, shop: 0.9, favela: 0.9, house: 0.8, club: 0.4, church: 0.6, warehouse: 0.35, factory: 0.5, kiosk: 0.6, ruin: 0, container: 0 }[b.style] ?? 0.8;
-  b._art = { W, D, H: b.H, k: projK(b.H), walls, roof, anim, seed: (b.seed % 1000) / 10, litMul, bakeKey: '', baked: null };
-  return b._art;
+  const litMul = { hq: 1.4, bar: 1.2, shack: 0.9, cwall: 0, tower: 1.25, apartment: 1.1, shop: 0.9, favela: 0.9, house: 0.8, club: 0.4, church: 0.6, warehouse: 0.35, factory: 0.5, kiosk: 0.6, ruin: 0, container: 0 }[b.style] ?? 0.8;
+  const art = { W, D, H: b.H, k: projK(b.H), walls, roof, anim: b.style === 'bar' ? 'swap' : anim, seed: (b.seed % 1000) / 10, litMul, bakeKey: '', baked: null };
+  if (tint) b._arts[tint] = art;
+  b._art = art;
+  return art;
 }
 
 // Bakes the building for the current ambient light ([r,g,b] 0..1) and lit-window pattern.
 // Returns { roof: [state0, state1], S: [..], N, E, W } (E and W are transposed for column drawing).
-export function bakeBuilding(b, amb, epoch, litFrac) {
-  const art = buildingArt(b);
+export function bakeBuilding(b, amb, epoch, litFrac, tint = null) {
+  const art = buildingArt(b, tint);
   const key = amb.map((v) => Math.round(v * 24)).join(',') + '|' + epoch + '|' + Math.round(litFrac * 10);
   if (art.bakeKey === key && art.baked) return art.baked;
   art.bakeKey = key;

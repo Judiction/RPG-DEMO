@@ -329,3 +329,36 @@ input { font-family: var(--head); }
 .card img.vimg { width: auto; max-width: 132px; }
 .invite.small { font-size: 11px; }
 .invite .seed { font-size: 15px; letter-spacing: 2px; }
+
+/* ------------------------------------------------------------ round 4: belt, buffs, wanted, bar shops */
+.belt-row { display: flex; justify-content: center; align-items: flex-end; gap: 10px; margin-bottom: 6px; }
+.belt { display: flex; gap: 5px; }
+.bslot { position: relative; width: 40px; height: 40px; background: var(--panel); border: 2px solid var(--line); box-shadow: 0 0 0 2px #05030c, 0 0 10px rgba(255,255,255,.06); display: flex; align-items: center; justify-content: center; }
+.bslot img { width: 32px; height: 32px; image-rendering: pixelated; }
+.bslot.empty { opacity: .5; }
+.bslot .key { position: absolute; left: 2px; top: 0; font-family: var(--head); font-size: 9px; color: var(--yellow); text-shadow: 1px 1px 0 #000; }
+.buffs { display: flex; gap: 4px; flex-wrap: wrap; max-width: 260px; justify-content: flex-end; }
+.buff { display: flex; align-items: center; gap: 2px; background: var(--panel); border: 2px solid var(--line); padding: 1px 5px 1px 2px; font-family: var(--head); font-size: 10px; color: #fff; }
+.buff img { width: 16px; height: 16px; image-rendering: pixelated; }
+.buff.poison { border-color: #a6ff3f; color: #a6ff3f; animation: blink 1s infinite; }
+.buff .pz { font-size: 14px; }
+.wanted { margin-top: 4px; }
+.wstars { font-size: 20px; letter-spacing: 1px; line-height: 20px; }
+.wstars .st { font-style: normal; color: #2a2236; text-shadow: 1px 1px 0 #000; }
+.wstars .st.on { color: var(--yellow); text-shadow: 0 0 6px var(--yellow), 1px 1px 0 #000; }
+.wstars .st.part { background: linear-gradient(90deg, #ffd23f var(--p), #2a2236 var(--p)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.wstars.hot .st.on { animation: siren .5s infinite; }
+@keyframes siren { 0%, 49% { color: #ff3b3b; text-shadow: 0 0 8px #ff3b3b; } 50%, 100% { color: #5a8aff; text-shadow: 0 0 8px #5a8aff; } }
+.wsub { font-size: 15px; color: var(--dim); line-height: 15px; }
+.wsub.safe { color: var(--green); font-family: var(--head); font-size: 9px; }
+.bar.esc { height: 6px; margin-top: 3px; }
+.bar.esc .fill { background: linear-gradient(90deg, #5a8aff, #9af0ff); }
+.warnbar.cops { background: rgba(90,138,255,.16); color: #d8e4ff; border-color: #5a8aff; display: flex; align-items: center; gap: 10px; }
+.warnbar.cops .btn { margin-left: auto; }
+.modal-inner.shop { width: 780px; }
+.beltview { font-family: var(--head); font-size: 11px; color: var(--dim); display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.beltview .bv { display: inline-flex; align-items: center; gap: 2px; border: 2px solid var(--line); padding: 1px 6px 1px 2px; color: var(--yellow); }
+.beltview .bv img { width: 20px; height: 20px; image-rendering: pixelated; }
+.beltview .bv.empty { padding: 3px 8px; opacity: .5; }
+.card.item img.iimg { width: 48px; height: 48px; }
+.card.item.stims { border-color: #5a1a3a; background: rgba(40, 10, 30, .9); }

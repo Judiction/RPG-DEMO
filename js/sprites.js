@@ -240,11 +240,12 @@ function paintHumanoid(s, dir, frame) {
 }
 
 // ------------------------------------------------------------------ special (non-humanoid) enemies
-function paintDrone(frame) {
+function paintDrone(frame, police = false) {
   const c = mk(18, 16), g = c.getContext('2d');
   const P = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
   const y = 3 + (frame % 2);
-  P(4, y + 2, 10, 5, '#d8e4ee'); P(5, y + 1, 8, 1, '#eef4fa'); P(4, y + 6, 10, 1, '#7a8ea3');
+  P(4, y + 2, 10, 5, police ? '#22306a' : '#d8e4ee'); P(5, y + 1, 8, 1, police ? '#3a4a8a' : '#eef4fa'); P(4, y + 6, 10, 1, police ? '#141c44' : '#7a8ea3');
+  if (police) { P(4, y + 1, 3, 1, frame % 2 ? '#ff3b3b' : '#3a5aff'); P(11, y + 1, 3, 1, frame % 2 ? '#3a5aff' : '#ff3b3b'); }
   P(8, y + 3, 2, 2, frame % 4 < 2 ? '#3ad0ff' : '#ff3b5c');
   P(1, y + 1, 4, 1, '#56606e'); P(13, y + 1, 4, 1, '#56606e');
   P(frame % 2 ? 0 : 2, y, 4, 1, '#c9d3df'); P(frame % 2 ? 12 : 14, y, 4, 1, '#c9d3df');
@@ -291,6 +292,15 @@ function paintMech(kind, frame) {
     P(16, 16 + bob, 8, 8, '#1a2a3a'); P(18, 18 + bob, 4, 4, frame % 2 ? '#3ad0ff' : '#9af0ff');
     P(3, 9 + bob, 7, 9, m); P(30, 9 + bob, 7, 9, m); P(1, 11 + bob, 3, 3, '#56606e'); P(36, 11 + bob, 3, 3, '#56606e');
     P(14, 5 + bob, 12, 8, m); P(15, 8 + bob, 10, 2, '#3ad0ff');
+  } else if (kind === 'pmecha') {
+    // police riot mech: dark blue armor, siren lights on the shoulders
+    const m = '#22306a', mD = '#141c44';
+    P(10, 28 + step, 6, 10 - step, mD); P(24, 28 - step, 6, 10 + step, mD);
+    P(8, 11 + bob, 24, 18, m); P(8, 27 + bob, 24, 2, mD); P(8, 11 + bob, 24, 1, '#3a4a8a');
+    P(14, 15 + bob, 12, 8, '#0c1020'); P(15, 17 + bob, 10, 2, '#5a8aff');
+    P(2, 9 + bob, 7, 10, m); P(31, 9 + bob, 7, 10, m);
+    P(3, 8 + bob, 4, 2, frame % 2 ? '#ff3b3b' : '#3a5aff'); P(33, 8 + bob, 4, 2, frame % 2 ? '#3a5aff' : '#ff3b3b');
+    P(13, 4 + bob, 14, 8, m); P(14, 7 + bob, 12, 2, '#ff3b5c'); P(17, 20 + bob, 6, 2, '#ffd23f');
   } else {
     // paredão: walking wall of speakers
     const m = '#2a1840', e = '#a66bff';
@@ -360,6 +370,12 @@ const TIER_LOOK = [
     { top: '#a66bff', pants: '#251639', hair: 'mohawk', hairColor: '#ff3fa4', armor: 2, chromeLegs: true, chains: true, eye: '#ffd23f' },
     { special: 'dog' },
     { special: 'paredao' }],
+  [null,
+    { top: '#22306a', pants: '#141c44', hair: 'cap', capColor: '#141c44', belt: '#ffd23f', band: '#ff3b3b' },
+    { top: '#22306a', top2: '#3a4a8a', pants: '#141c44', hat: 'helmet', hatColor: '#1a2448', visor: '#5a8aff', belt: '#ffd23f' },
+    { top: '#1a1e2e', top2: '#2a3048', pants: '#141824', hat: 'helmet', hatColor: '#2a3048', visor: '#ff3b5c', armor: 4, chromeLegs: true, belt: '#5a8aff' },
+    { special: 'pdrone' },
+    { special: 'pmecha' }],
 ];
 
 export function allySpec(gangColor, id) {
@@ -405,7 +421,7 @@ export function charSprite(spec, dir, frame) {
   const key = spec._k + dir + ':' + frame;
   let c = charCache.get(key);
   if (c) return c;
-  if (spec.special === 'drone') c = paintDrone(frame);
+  if (spec.special === 'drone' || spec.special === 'pdrone') c = paintDrone(frame, spec.special === 'pdrone');
   else if (spec.special === 'dog') { c = paintDog(frame, spec); if (dir === 1) c = flipX(c); }
   else if (spec.special) { c = paintMech(spec.special, frame); if (dir === 1) c = flipX(c); }
   else c = paintHumanoid(spec, dir, frame);
@@ -747,6 +763,11 @@ function paintProp(type, v, frame) {
       for (let i = 0; i < 5; i++) E(3 + i * 5, 27, 3, 1, i % 2 ? '#1b1b24' : '#ffd23f');
     }
     return finish(o, 13, 28);
+  }
+  if (type === 'sandbags') {
+    c = mk(22, 12); g = c.getContext('2d');
+    for (let r = 0; r < 2; r++) for (let i = 0; i < 4 - r; i++) { const x = 1 + i * 5 + r * 2, y = 6 - r * 4; P(x, y, 6, 4, '#a89870'); P(x, y, 6, 1, '#c8b890'); P(x, y + 3, 6, 1, '#7a6a4a'); }
+    outline(c); c.ax = 11; c.ay = 11; return c;
   }
   if (type === 'flood') {
     // base floodlight tower

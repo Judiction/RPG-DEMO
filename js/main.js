@@ -8,7 +8,7 @@
 
 import {
   TILE, WEAPONS, ABILITIES, randomLook, LOOK_KEYS, LOOK_OPTIONS, GANG_COLORS, NAME_COLORS, VEHICLES, VEHICLE_IDS,
-  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL,
+  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL, BAR_ROOM, ITEMS, WANTED,
 } from './data.js';
 import { randomSeed } from './rng.js';
 import { generateWorld, moveBox, regionAt, rayCast, opaqueAt } from './world.js';
@@ -69,14 +69,14 @@ window.addEventListener('resize', () => renderer.resize());
 const app = {
   mode: 'title',            // title | host | client
   world: null, game: null, myId: 'host', roomCode: null, slot: 0, mapOpts: null,
-  local: { x: 0, y: 0, aim: 0, dashT: 0, dashX: 0, dashY: 0, moving: false, vx: 0, vy: 0, ix: 0, iy: 0, wx: 0, wy: 0, lastDx: 0, lastDy: 1 },
+  local: { x: 0, y: 0, aim: 0, dashT: 0, dashX: 0, dashY: 0, moving: false, vx: 0, vy: 0, ix: 0, iy: 0, wx: 0, wy: 0, lastDx: 0, lastDy: 1, bar: -1, bx: 0, by: 0, barT: 0 },
   menuOpen: false, typing: false, music: null, musicOn: true,
   titleCam: { t: 0 }, saveT: 0, sendT: 0, snapT: 0, acc: 0, intensityT: 0, trackKey: '',
   chats: new Map(),
 };
 const host = { peer: null, clients: new Map() };
 const client = {
-  peer: null, conn: null, players: new Map(), enemies: new Map(), allies: new Map(), pickups: new Map(), turrets: new Map(), vehicles: new Map(), civs: new Map(), projectiles: [],
+  peer: null, conn: null, players: new Map(), enemies: new Map(), allies: new Map(), pickups: new Map(), turrets: new Map(), vehicles: new Map(), civs: new Map(), pcars: new Map(), projectiles: [],
   me: null, prof: null, rg: null, roster: new Map(), day: 0.3, cd: { L: 0, R: 0 }, radar: [], broken: new Set(), mode: 'pve', seed: 0,
 };
 
@@ -256,7 +256,7 @@ function tryJoin(id, c, gang) {
 
 function hostTick(dt) {
   const game = app.game;
-  G.setInput(game, 'host', { x: app.local.x, y: app.local.y, aim: app.local.aim, fireL: app.fireL, fireR: app.fireR });
+  G.setInput(game, 'host', { x: app.local.x, y: app.local.y, aim: app.local.aim, fireL: app.fireL, fireR: app.fireR, bx: app.local.bx, by: app.local.by });
   app.acc += dt;
   let steps = 0;
   while (app.acc >= STEP && steps < 5) { G.step(game, STEP); app.acc -= STEP; steps++; }
@@ -335,7 +335,7 @@ function cleanupClient() {
   try { client.conn && client.conn.close(); } catch { /* ignore */ }
   try { client.peer && client.peer.destroy(); } catch { /* ignore */ }
   client.peer = null; client.conn = null;
-  for (const m of [client.players, client.enemies, client.allies, client.pickups, client.turrets, client.vehicles, client.civs]) m.clear();
+  for (const m of [client.players, client.enemies, client.allies, client.pickups, client.turrets, client.vehicles, client.civs, client.pcars]) m.clear();
   client.projectiles = [];
   client.me = null; client.prof = null; client.rg = null;
 }
@@ -412,6 +412,9 @@ function applySnapshot(s) {
     o.tx = r[1]; o.ty = r[2]; o.aim = r[3]; o.hp = r[4]; o.maxHp = r[5];
     o.dead = !!(r[6] & 1); o.cloak = !!(r[6] & 2); o.shield = !!(r[6] & 4); o.inv = !!(r[6] & 8); o.burn = !!(r[6] & 16); o.out = !!(r[6] & 32);
     o.level = r[7]; o.veh = r[8] || 0; o.seat = r[9];
+    o.ghost = !!(r[6] & 64); o.cops = !!(r[6] & 128);
+    o.bar = r[10] ?? -1; o.tbx = r[11]; o.tby = r[12]; o.emote = r[13] || 0; o.stars = r[14] || 0;
+    if (o.bx === undefined || o.bar !== o.lastBar) { o.bx = o.tbx; o.by = o.tby; o.lastBar = o.bar; }
   });
   syncMap(client.enemies, s.E, (r) => ({ id: r[0], x: r[2], y: r[3] }), (o, r) => {
     o.faction = Math.floor(r[1] / 10); const t = r[1] % 10; o.boss = t === 6; o.tier = o.boss ? 5 : t;
@@ -434,6 +437,7 @@ function applySnapshot(s) {
     o.tx = r[1]; o.ty = r[2]; o.seed = r[3]; o.flee = !!(r[4] & 1); o.flash = !!(r[4] & 2); o.moving = !!(r[4] & 4); o.aim = r[5]; o.hpPct = r[6];
   });
   syncMap(client.pickups, s.K, (r) => ({ id: r[0] }), (o, r) => { o.type = r[1] ? 'heal' : 'cash'; o.x = r[2]; o.y = r[3]; });
+  syncMap(client.pcars, s.PC || [], (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => { o.tx = r[1]; o.ty = r[2]; o.dir = r[3]; o.state = r[4]; });
   if (client.me.veh && client.me.veh !== prevVeh) { const v = client.vehicles.get(client.me.veh); if (v) { app.local.x = v.tx; app.local.y = v.ty; app.local.vx = app.local.vy = 0; } }
   if (s.ev) for (const ev of s.ev) handleEvent(ev);
 }
@@ -441,7 +445,8 @@ function applySnapshot(s) {
 function clientTick(dt) {
   // interpolate others
   const k = Math.min(1, dt * 14);
-  for (const m of [client.players, client.enemies, client.allies, client.vehicles, client.civs]) for (const o of m.values()) {
+  for (const o of client.players.values()) if (o.tbx !== undefined && o.bx !== undefined) { o.bx += (o.tbx - o.bx) * k; o.by += (o.tby - o.by) * k; }
+  for (const m of [client.players, client.enemies, client.allies, client.vehicles, client.civs, client.pcars]) for (const o of m.values()) {
     if (o.tx === undefined) continue;
     if (Math.abs(o.tx - o.x) > 160 || Math.abs(o.ty - o.y) > 160) { o.x = o.tx; o.y = o.ty; }
     o.x += (o.tx - o.x) * k; o.y += (o.ty - o.y) * k;
@@ -464,7 +469,9 @@ function clientTick(dt) {
   app.sendT += dt;
   if (app.sendT >= 0.033 && client.conn) {
     app.sendT = 0;
-    send(client.conn, { t: 'i', x: +app.local.x.toFixed(1), y: +app.local.y.toFixed(1), aim: +app.local.aim.toFixed(3), fireL: app.fireL, fireR: app.fireR });
+    const inp = { t: 'i', x: +app.local.x.toFixed(1), y: +app.local.y.toFixed(1), aim: +app.local.aim.toFixed(3), fireL: app.fireL, fireR: app.fireR };
+    if (app.local.bar >= 0) { inp.bx = +app.local.bx.toFixed(1); inp.by = +app.local.by.toFixed(1); }
+    send(client.conn, inp);
   }
   // local predicted attacks (visual only; the host decides hits)
   if (client.me && !client.me.dead && client.prof && !(client.me.veh && client.me.seat === 0)) {
@@ -473,7 +480,7 @@ function clientTick(dt) {
       const firing = slot === 'L' ? app.fireL : app.fireR;
       if (firing && client.cd[slot] <= 0) {
         const wid = client.prof.equip[slot];
-        client.cd[slot] = WEAPONS[wid].cd;
+        client.cd[slot] = WEAPONS[wid].cd * (client.prof.rof || 1);
         predictFire(slot, wid);
       }
     }
@@ -578,7 +585,7 @@ function handleEvent(ev) {
       sfx('spark', ev.x, ev.y, 0.5);
       break;
     case 'dmg': {
-      const col = { hit: '#ffffff', crit: '#ffd23f', player: '#ff3b5c', heal: '#3ddc84', ally: '#ff9ab8', burn: '#ff8a3d', veh: '#c8c0ff', civ: '#c8c0d8' }[ev.c] || '#fff';
+      const col = { hit: '#ffffff', crit: '#ffd23f', player: '#ff3b5c', heal: '#3ddc84', ally: '#ff9ab8', burn: '#ff8a3d', veh: '#c8c0ff', civ: '#c8c0d8', poison: '#a6ff3f' }[ev.c] || '#fff';
       renderer.text(ev.x + (Math.random() - 0.5) * 6, ev.y, (ev.c === 'heal' ? '+' : '') + ev.v + (ev.c === 'crit' ? '!' : ''), col);
       if (ev.c === 'hit' || ev.c === 'crit') { renderer.burst(ev.x, ev.y + 8, ['#ffffff', '#ffd23f', '#9af0ff'], 4, 50, 0.25); sfx('hit', ev.x, ev.y, 0.6); }
       break;
@@ -692,6 +699,7 @@ function handleEvent(ev) {
       if (ev.k === 'uncloak') renderer.burst(ev.x, ev.y - 8, ['#22e5ff', '#ffffff'], 10, 40, 0.4, 0, true);
       if (ev.k === 'shield') { sfx('shield', ev.x, ev.y); renderer.effect({ k: 'ring', x: ev.x, y: ev.y - 8, r: 18, c: '#4fc3ff', life: 0.4 }); }
       if (ev.k === 'shieldbreak') renderer.burst(ev.x, ev.y - 8, ['#4fc3ff', '#ffffff'], 14, 70, 0.4, 0, true);
+      if (ev.k === 'cheat') { sfx('cheat', ev.x, ev.y); renderer.effect({ k: 'pillar', x: ev.x, y: ev.y, c: '#ff9ad8', life: 1 }); renderer.burst(ev.x, ev.y - 10, ['#ff9ad8', '#ffffff', '#ffd23f'], 30, 90, 1, 0, true); if (ev.id === app.myId) ui.alert('<b>DOCE</b> kicked in — you cheated death!', 'good'); }
       break;
     }
     case 'tp':
@@ -716,6 +724,7 @@ function handleEvent(ev) {
       break;
     case 'fdie': if (ev.id === app.myId) { ui.log('One of your crew fell. Capture more districts to recruit again.', 'bad'); } break;
     case 'cap': {
+      renderer.capture(ev.r, ev.f, ev.g);
       const R = app.world.regions[ev.r];
       const C = R.compound;
       const x = (C.coreX + 0.5) * TILE, y = (C.coreY + 0.5) * TILE;
@@ -734,6 +743,7 @@ function handleEvent(ev) {
     }
     case 'cleared': ui.log(`Garrison of <b>${escapeHtml(app.world.regions[ev.r].name)}</b> wiped out. Take the core!`, 'good'); break;
     case 'lost':
+      renderer.capture(ev.r, ev.g, ev.f);
       if (ev.g !== myGangId() && pvp) { ui.log(`${factionName(ev.f)} retook <b>${escapeHtml(app.world.regions[ev.r].name)}</b> from ${gangLabel(ev.g)}.`, 'info'); break; }
       sfx('lost'); ui.alert(`We lost <b>${escapeHtml(app.world.regions[ev.r].name)}</b> to ${factionName(ev.f)}!`, 'raid'); ui.log(`${factionName(ev.f)} retook <b>${escapeHtml(app.world.regions[ev.r].name)}</b>.`, 'bad');
       break;
@@ -757,6 +767,41 @@ function handleEvent(ev) {
       break;
     }
     case 'buy': sfx('buy'); ui.toast(escapeHtml(ev.text), 'gold'); break;
+    case 'wanted':
+      if (ev.id !== app.myId) break;
+      if (ev.stars > 0) { sfx('siren'); ui.alert(`${'★'.repeat(ev.stars)} <b>WANTED</b> — the police are coming! Run (lose them), fight (beat the response) or pay them off at the QG.`, 'raid', 5000); }
+      else if (ev.why === 'beat') { sfx('capture'); ui.alert('You beat the police response. Wanted level cleared!', 'good'); }
+      else if (ev.why === 'escaped') { sfx('cup'); ui.alert('You lost the police. Wanted level cleared.', 'good'); }
+      else if (ev.why === 'bribe') { sfx('cash'); ui.alert('Paid off. The police forget about you... for now.', 'good'); }
+      break;
+    case 'siren': sfx('siren', ev.x, ev.y); break;
+    case 'copsdrop':
+      sfx('copsdrop', ev.x, ev.y);
+      renderer.burst(ev.x, ev.y, ['#8a8494', '#c8c0d8'], 16, 70, 0.6);
+      renderer.effect({ k: 'ring', x: ev.x, y: ev.y, r: 26, c: '#5a8aff', life: 0.5 });
+      break;
+    case 'useitem': {
+      const I = ITEMS[ev.item];
+      sfx(I && I.price >= 600 ? 'stim' : 'drink', ev.x, ev.y);
+      renderer.burst(ev.x, ev.y - 14, [I ? I.c : '#fff', '#ffffff'], 12, 40, 0.6, 0, true);
+      if (ev.id === app.myId && I) {
+        ui.toast(`${escapeHtml(I.name)}: ${escapeHtml(I.desc)}`, 'good');
+        if (ev.bad) { sfx('poison'); ui.alert('<b>BATIZADO!</b> Bad batch — you are poisoned (it will not kill you). A Água de Coco cures it.', 'raid', 5000); }
+      }
+      break;
+    }
+    case 'buffend': if (ev.id === app.myId) ui.toast(`${escapeHtml(ev.k)} wore off.`, 'warn'); break;
+    case 'emote': sfx('dance', ev.x, ev.y); renderer.burst(ev.x, ev.y - 20, ['#ff3fa4', '#22e5ff', '#ffd23f'], 10, 40, 0.8, 0, true); break;
+    case 'barin':
+      sfx('door', ev.x, ev.y);
+      if (ev.id === app.myId) {
+        const bar = app.world.bars[ev.bar];
+        enterBarLocal(ev.bar);
+        ui.closeModal();
+        ui.toast(`<b>${escapeHtml(bar.name)}</b> — [B] at the counter for drinks${bar.dealer ? ', or talk to the dealer in the back' : ''}. Walk out the door to leave.`, 'gold');
+      }
+      break;
+    case 'barout': sfx('door', ev.x, ev.y); if (ev.id === app.myId) { app.local.bar = -1; app.trackKey = ''; ui.closeModal(); } break;
     case 'cup': sfx('cup'); ui.log(escapeHtml(ev.text), 'gold'); break;
     case 'income': break;
     case 'msg':
@@ -829,6 +874,7 @@ function useAbility(k) {
   const prof = myProfile(), me = myPrivate();
   if (!prof || !me || me.dead) return;
   if (me.veh && (k === 'Q' || k === 'R')) return;
+  if (me.bar >= 0 || me.emo > 0) return;
   const A = ABILITIES[k];
   const lvl = prof.mods[A.mod] || 0;
   if (lvl < 1) { ui.toast(`${A.name} needs the ${A.mod === 'legs' ? 'Leg Servos' : A.mod === 'nanite' ? 'Nanite Regen' : A.mod === 'optic' ? 'Optical Camo' : 'Kinetic Shield'} mod (Clínica at the QG).`, 'warn'); sfx('error'); return; }
@@ -840,7 +886,7 @@ function useAbility(k) {
     if (!dx && !dy) { dx = Math.cos(app.local.aim); dy = Math.sin(app.local.aim); }
     const l = Math.hypot(dx, dy) || 1;
     app.local.dashT = 0.17; app.local.dashX = dx / l; app.local.dashY = dy / l;
-    if (app.mode === 'client') { sfx('dash'); client.me.cd.Q = A.cd(lvl); }
+    if (app.mode === 'client') { sfx('dash'); client.me.cd.Q = prof.dash ? 1 : A.cd(lvl); }
   }
   if (app.mode === 'host') G.useAbility(app.game, 'host', k);
   else send(client.conn, { t: 'ab', k });
@@ -916,15 +962,26 @@ function gameFrame(dt, now) {
     else if (code === 'Enter' || code === 'NumpadEnter') { if (!ui.chatOpen()) ui.openChat(); }
     else if (code === 'KeyM') { app.musicOn = !app.musicOn; if (app.music) app.musicOn ? app.music.start() : app.music.stop(); ui.toast(app.musicOn ? 'Music on' : 'Music off'); }
     else if (code === 'KeyB') {
-      if (ui.isOpen() === 'base' || ui.isOpen() === 'compound') ui.closeModal();
+      const spot = contextSpot();
+      if (ui.isOpen() === 'base' || ui.isOpen() === 'compound' || ui.isOpen() === 'shop') ui.closeModal();
+      else if (spot && spot.shop) ui.openShop(spot.shop, spot.bar);
+      else if (me && me.bar >= 0) ui.toast('Walk up to the counter (drinks) or the dealer in the back to buy.', 'warn');
+      else if (spot && spot.tab) ui.toggleBase(spot.tab);
       else if (inBaseLocal()) ui.toggleBase();
       else if (nearOwnCompound() >= 0) ui.openCompound(nearOwnCompound());
       else ui.toast('B opens the base menu at your QG, or the upgrades of a compound you own (stand near its core).', 'warn');
     } else if (ui.isOpen()) continue;
-    else if (code === 'KeyV') { sendAction({ t: 'veh' }); }
+    else if (code === 'KeyV') { if (!(me && me.bar >= 0)) sendAction({ t: 'veh' }); }
+    else if (code === 'Digit1' || code === 'Digit2' || code === 'Digit3' || code === 'Numpad1' || code === 'Numpad2' || code === 'Numpad3') useBelt(Number(code.slice(-1)) - 1);
+    else if (code === 'KeyT') { if (me && !me.dead && !me.veh && !(me.emo > 0)) sendAction({ t: 'emote' }); }
     else if (code === 'KeyG') { sendAction({ t: 'recruit' }); }
     else if (code === 'KeyQ' || code === 'Space' || code === 'ShiftLeft' || code === 'ShiftRight') useAbility('Q');
-    else if (code === 'KeyE') useAbility('E');
+    else if (code === 'KeyE') {
+      const spot = contextSpot();
+      if (spot && spot.door !== undefined) enterBar();
+      else if (spot && spot.shop) ui.openShop(spot.shop, spot.bar);
+      else useAbility('E');
+    }
     else if (code === 'KeyR') useAbility('R');
     else if (code === 'KeyF') useAbility('F');
   }
@@ -932,8 +989,20 @@ function gameFrame(dt, now) {
   const L = app.local;
   const blocked = app.menuOpen && ui.isOpen() !== 'map';
   let speed = prof ? prof.speed || 72 : 72;
-  if (me && !me.dead && !app.typing) {
-    const ax = blocked ? { x: 0, y: 0 } : input.axis();
+  if (me && me.bar >= 0 && L.bar !== me.bar) enterBarLocal(me.bar);
+  if (me && !(me.bar >= 0) && L.bar >= 0 && performance.now() / 1000 - L.barT > 1.5) L.bar = -1;
+  const dancing = me && me.emo > 0;
+  if (me && !me.dead && !app.typing && L.bar >= 0) {
+    // inside a bar: walk around the room (local coordinates), walk out the door to leave
+    const ax = blocked || dancing ? { x: 0, y: 0 } : input.axis();
+    const ox = L.bx, oy = L.by;
+    moveInRoom(L, ax.x * speed * dt, ax.y * speed * dt);
+    L.moving = Math.abs(L.bx - ox) + Math.abs(L.by - oy) > 0.01;
+    if (L.by > BAR_ROOM.h - 7 && performance.now() / 1000 - L.barT > 0.6) { L.barT = performance.now() / 1000; sendAction({ t: 'barout' }); }
+    setEngine(0);
+  } else if (me && !me.dead && !app.typing) {
+    const ax = blocked || dancing ? { x: 0, y: 0 } : input.axis();
+    if (!veh && (ax.x || ax.y) && ax.y < 0) { const spot = contextSpot(); if (spot && spot.door !== undefined && spot.close) enterBar(); }
     if (veh && me.seat === 0) {
       // driving: flying ignores buildings; out of charge = slow ground crawl with collisions
       const V = VEHICLES[veh.type];
@@ -958,6 +1027,7 @@ function gameFrame(dt, now) {
       const acc = 1 - Math.exp(-dt * (ax.x || ax.y ? 16 : 11));
       L.wx += (tvx - L.wx) * acc; L.wy += (tvy - L.wy) * acc;
       let mx, my;
+      if (dancing) L.dashT = 0;
       if (L.dashT > 0) {
         L.dashT -= dt;
         mx = L.dashX * 300 * dt; my = L.dashY * 300 * dt;
@@ -976,9 +1046,10 @@ function gameFrame(dt, now) {
   } else { L.moving = false; L.wx = L.wy = L.ix = L.iy = 0; setEngine(0); }
   const mw = renderer.screenToWorld(input.mouse.x, input.mouse.y);
   const lift = veh && veh.flying ? 12 : 0;
-  L.aim = Math.atan2(mw.y - (L.y - 8 - lift), mw.x - L.x);
+  if (L.bar >= 0 && renderer.interiorOff) L.aim = Math.atan2(input.mouse.y - renderer.interiorOff.y - (L.by - 8), input.mouse.x - renderer.interiorOff.x - L.bx);
+  else L.aim = Math.atan2(mw.y - (L.y - 8 - lift), mw.x - L.x);
   renderer.mouse.x = input.mouse.x; renderer.mouse.y = input.mouse.y;
-  const fireOk = me && !me.dead && !app.menuOpen && !app.typing && !(veh && me.seat === 0);
+  const fireOk = me && !me.dead && !app.menuOpen && !app.typing && !(veh && me.seat === 0) && !(L.bar >= 0) && !dancing && !me.safe;
   app.fireL = !!(fireOk && input.mouse.L);
   app.fireR = !!(fireOk && input.mouse.R);
   setListener(L.x, L.y);
@@ -999,7 +1070,11 @@ function gameFrame(dt, now) {
     for (const e of view.enemies) if (Math.abs(e.x - L.x) < 14 * TILE && Math.abs(e.y - L.y) < 10 * TILE) lvl = Math.max(lvl, e.boss ? 2 : 1);
     if (view.raids.some((r) => (r.state === 'active' || r.state === 1) && (view.mode !== 'pvp' || r.g === view.myGang))) lvl = 2;
     app.music.setIntensity(lvl);
-    if (rid >= 0 && view.rs[rid]) {
+    if (L.bar >= 0) {
+      const bar = world.bars[L.bar];
+      if (app.trackKey !== 'club' + bar.id) { app.trackKey = 'club' + bar.id; app.music.setTrack('club', bar.seed >>> 0); }
+      app.music.setIntensity(0);
+    } else if (rid >= 0 && view.rs[rid]) {
       const o = view.rs[rid].owner;
       const style = typeof o === 'number' ? ['bruxaria', 'melody', 'f150'][o] : 'volt';
       const key = style + rid;
@@ -1035,7 +1110,8 @@ function gameFrame(dt, now) {
     vault: myGangObj.vault, up: myGangObj.up || {}, gangs, mode: view.mode, myGang: myG,
     rs: view.rs, raids: view.raids.map((r) => ({ target: r.target, f: r.f, state: r.state === 'warn' ? 0 : 1, t: Math.max(0, Math.round(r.t)), g: r.g })),
     gangName: myGangObj.name, gangColor: GANG_COLORS[myG], regionId: rid,
-    inBase: inBaseLocal(), nearCompound: nearOwnCompound(), nearVehicle, civPrompt: view.civPrompt, quality: renderer.quality,
+    inBase: inBaseLocal(), nearCompound: nearOwnCompound(), nearVehicle, civPrompt: L.bar >= 0 ? 0 : view.civPrompt, quality: renderer.quality, ctxHint: contextHint(),
+    barName: L.bar >= 0 ? world.bars[L.bar].name : '',
     roomCode: app.roomCode, isHost, playerCount: view.players.length, players, enemiesNear, radar: isHost ? st.radar[myGangId()] || [] : client.radar,
     vehicles: view.vehicles.map((v) => ({ x: v.x, y: v.y, charge: v.charge, type: v.type })),
     vehicle: veh ? { type: veh.type, hp: veh.hp, maxHp: veh.maxHp, charge: Math.round(veh.charge), flying: veh.flying, charging: veh.charging, seat: me.seat } : null,
@@ -1043,6 +1119,77 @@ function gameFrame(dt, now) {
     musicName: app.music && app.music.playing ? app.music.styleName() : '',
     seedCode: isHost ? seedCode(app.mapOpts.type, app.mapOpts.size, app.game.seed) : app.seedCode,
   }, now);
+}
+
+// ------------------------------------------------------------------ bars, belt, base buildings
+function useBelt(i) {
+  const me = myPrivate();
+  if (!me || me.dead || !me.belt || !me.belt[i]) { sfx('error'); return; }
+  sendAction({ t: 'use', s: i });
+}
+function enterBar() {
+  const L = app.local, now = performance.now() / 1000;
+  if (now - L.barT < 1) return;
+  L.barT = now;
+  sendAction({ t: 'barin' });
+}
+function enterBarLocal(id) {
+  const L = app.local;
+  L.bar = id; L.bx = BAR_ROOM.door.x; L.by = BAR_ROOM.door.y - 18; L.barT = performance.now() / 1000;
+  L.wx = L.wy = L.ix = L.iy = 0; L.dashT = 0;
+}
+// player vs the room's furniture (axis-separated box collision, radius 5)
+function moveInRoom(L, dx, dy) {
+  const r = 5;
+  const hit = (x, y) => {
+    if (x < r || x > BAR_ROOM.w - r || y < r) return true;
+    if (y > BAR_ROOM.h - r && !(x > BAR_ROOM.door.x - 14 && x < BAR_ROOM.door.x + 14)) return true;
+    for (const b of BAR_ROOM.solids) if (x + r > b.x && x - r < b.x + b.w && y + r > b.y && y - r < b.y + b.h) return true;
+    return false;
+  };
+  if (!hit(L.bx + dx, L.by)) L.bx += dx;
+  if (!hit(L.bx, L.by + dy)) L.by += dy;
+  L.by = Math.min(BAR_ROOM.h + 4, L.by);
+}
+// what can I interact with here? (bar door, counter, dealer, a base building)
+function contextSpot() {
+  const me = myPrivate();
+  if (!me || me.dead || me.veh) return null;
+  const L = app.local, world = app.world;
+  if (L.bar >= 0) {
+    const bar = world.bars[L.bar];
+    const K = BAR_ROOM.counter;
+    if (L.bx < K.x + K.w + 40 && L.by > K.y - 6 && L.by < K.y + K.h + 6) return { shop: 'drinks', bar };
+    if (bar.dealer && Math.hypot(L.bx - BAR_ROOM.dealer.x, L.by - BAR_ROOM.dealer.y) < 40) return { shop: 'stims', bar };
+    if (L.by > BAR_ROOM.h - 46 && Math.abs(L.bx - BAR_ROOM.door.x) < 30) return { exit: true, bar };
+    return null;
+  }
+  for (const b of world.bars) {
+    const d = Math.hypot(b.doorX - L.x, b.doorY - L.y);
+    if (d < 22) return { door: b.id, bar: b, close: d < 14 };
+  }
+  if (inBaseLocal()) {
+    const r = regionAt(world, L.x, L.y);
+    const C = world.regions[r].compound;
+    for (const st of C.stations || []) {
+      const x = (st.x + 0.5) * TILE, y = (st.y + 0.5) * TILE;
+      if (Math.abs(x - L.x) < (st.kind === 'garage' ? 2.5 : 1.8) * TILE && Math.abs(y - L.y) < 1.6 * TILE) return { tab: st.kind };
+    }
+  }
+  return null;
+}
+const SPOT_NAME = { arsenal: 'ARSENAL — buy & upgrade arms', clinic: 'CLÍNICA — body mods', locker: 'ARMÁRIO — equip arms', vault: 'COFRE — gang vault', garage: 'GARAGEM — vehicles' };
+function contextHint() {
+  const s = contextSpot();
+  const me = myPrivate();
+  if (me && me.emo > 0) return '♪ DANÇANDO... ♪';
+  if (!s) return me && me.bar >= 0 ? 'Walk out through the door (bottom) to leave' : '';
+  if (s.shop === 'drinks') return `[B] BALCÃO — buy drinks (${s.bar.name})`;
+  if (s.shop === 'stims') return '[B] Talk to the dealer — cyber stims (risky)';
+  if (s.exit) return 'Walk through the door to go back outside';
+  if (s.door !== undefined) return `[E] Enter ${s.bar.name}${s.bar.dealer ? ' · bar + dealer' : ' · bar'}`;
+  if (s.tab) return `[B] ${SPOT_NAME[s.tab]}`;
+  return '';
 }
 
 function inBaseLocal() {
@@ -1074,7 +1221,7 @@ function buildView() {
   const isHost = app.mode === 'host';
   const L = app.local;
   const chatOf = (id) => { const c = app.chats.get(id); return c && c.t > renderer.time ? c : null; };
-  let players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, rs, raids, dayT, broken, mode, waypointsSrc;
+  let players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, rs, raids, dayT, broken, mode, waypointsSrc, pcars;
   const myG = myGangIdx();
   if (isHost) {
     const g = app.game;
@@ -1084,6 +1231,7 @@ function buildView() {
       hp: p.hp, maxHp: p.maxHp, dead: p.dead, out: p.out, cloak: p.cloakT > 0, shield: p.shieldHp > 0, inv: p.invulnT > 0, burn: p.burnT > 0,
       name: p.name, look: p.look, equip: p.equip, mods: p.mods, level: p.level, chat: chatOf(p.id), color: p.color, gang: G.gangIdx(p.gang),
       veh: p.veh || 0, seat: p.seat,
+      bar: p.inBar, bx: p.id === 'host' ? L.bx : p.bx, by: p.id === 'host' ? L.by : p.by, emote: p.emoteT > 0 ? p.emote + 1 : 0, ...(() => { const pf = G.profile(p); return { ghost: !!pf.ghost, fury: pf.fury }; })(),
     }));
     enemies = [...g.enemies.values()].map((e) => ({ ...e, burn: e.burnT > 0 }));
     allies = [...g.allies.values()].filter((a) => !a.hidden).map((a) => ({ id: a.id, x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp, flash: a.flash, moving: a.moving, aim: a.aim, team: G.gangIdx(a.team), follow: a.follow, tier: a.tier, civ: a.civ, melee: a.melee }));
@@ -1094,6 +1242,7 @@ function buildView() {
     rs = g.rs; raids = g.raids.map((r) => ({ ...r, g: G.gangIdx(r.gang) })); dayT = g.dayT;
     broken = new Set([...g.brk.entries()].filter(([, s]) => s.deadT > 0).map(([k]) => k));
     waypointsSrc = [...g.players.values()].map((p) => ({ name: p.name, color: p.color, wp: p.wp, g: G.gangIdx(p.gang), me: p.id === 'host' }));
+    pcars = [...g.pcars.values()].map((c) => ({ x: c.x, y: c.y, dir: c.dir, state: c.state === 'in' ? 0 : c.state === 'drop' ? 1 : 2 }));
   } else {
     mode = client.mode;
     players = [];
@@ -1105,12 +1254,14 @@ function buildView() {
         dead: mine ? client.me.dead : o.dead, out: o.out, cloak: o.cloak, shield: o.shield, inv: o.inv, burn: o.burn,
         name: r.name || '?', look: r.look || {}, equip: mine && client.prof ? client.prof.equip : r.equip, mods: mine && client.prof ? client.prof.mods : r.mods, level: o.level, chat: chatOf(o.id),
         color: r.color, gang: r.g ?? 0, veh: o.veh, seat: o.seat,
+        bar: mine ? client.me.bar : o.bar, bx: mine ? L.bx : o.bx, by: mine ? L.by : o.by, emote: o.emote, ghost: mine && client.prof ? !!client.prof.ghost : o.ghost, fury: mine && client.prof ? client.prof.fury : false,
       });
     }
     enemies = [...client.enemies.values()]; allies = [...client.allies.values()]; pickups = [...client.pickups.values()]; projectiles = client.projectiles;
     turrets = [...client.turrets.values()]; vehicles = [...client.vehicles.values()]; civs = [...client.civs.values()];
     rs = client.rg.rs; raids = client.rg.raids; dayT = client.day; broken = client.rg.broken;
     waypointsSrc = [...client.roster.values()].map((r) => ({ name: r.name, color: r.color, wp: r.wp, g: r.g, me: r.id === app.myId }));
+    pcars = [...client.pcars.values()];
   }
   // my own vehicle follows my local prediction when I drive
   const me0 = myPrivate();
@@ -1123,7 +1274,18 @@ function buildView() {
   if (meP && meP.veh) { const v = vehicles.find((x) => x.id === meP.veh); if (v) meP.alt = v.flying ? 11 : 1; }
   let civPrompt = 0;
   if (meP && !meP.dead && !meP.veh) { let bd = 24 * 24; for (const c of civs) { const d = (c.x - L.x) ** 2 + (c.y - L.y) ** 2; if (d < bd && !c.flee) { bd = d; civPrompt = c.id; } } }
-  return { world: app.world, me: meP, meMoving: L.moving, players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, civPrompt, rs, raids, gangColor: GANG_COLORS[myG], myGang: myG, mode, dayT, broken, waypoints };
+  if (meP && L.bar >= 0) meP.bar = L.bar;
+  let interior = null;
+  if (meP && L.bar >= 0) {
+    const bar = app.world.bars[L.bar];
+    const inside = players.filter((p) => p.bar === L.bar && !p.dead).map((p) => (p.id === app.myId ? { ...p, x: L.bx, y: L.by, moving: L.moving } : { ...p, x: p.bx, y: p.by }));
+    const spot = contextSpot();
+    let prompt = null;
+    if (spot && spot.shop) prompt = { text: spot.shop === 'stims' ? '[B] FALA AI' : '[B] BALCAO', x: L.bx, y: L.by - 40 };
+    interior = { bar, me: { x: L.bx, y: L.by }, players: inside, prompt };
+  }
+  const prof = myProfile();
+  return { world: app.world, me: meP, meMoving: L.moving, players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, civPrompt, rs, raids, gangColor: GANG_COLORS[myG], myGang: myG, mode, dayT, broken, waypoints, pcars, interior, sway: !!(prof && prof.sway) };
 }
 
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }

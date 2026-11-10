@@ -152,6 +152,16 @@ export function sfx(name, x, y, volume = 1) {
     case 'wp': tone(t, 0.1, { wave: 'sine', f: 1320, v: 0.15, out }); tone(t + 0.1, 0.15, { wave: 'sine', f: 1760, v: 0.12, out }); break;
     case 'land': tone(t, 0.4, { wave: 'sawtooth', f: 300, f2: 60, v: 0.15, out }); noise(t + 0.3, 0.2, { f: 600, v: 0.3, out }); break;
     case 'save': tone(t, 0.05, { wave: 'sine', f: 1500, v: 0.05, out }); break;
+    // police siren: two-tone wail
+    case 'siren': for (let i = 0; i < 4; i++) { tone(t + i * 0.36, 0.34, { wave: 'square', f: 780, f2: 1180, v: 0.07, out, attack: 0.03 }); tone(t + i * 0.36, 0.34, { wave: 'sine', f: 390, f2: 590, v: 0.1, out, attack: 0.03 }); } break;
+    case 'copsdrop': tone(t, 0.35, { wave: 'sawtooth', f: 200, f2: 60, v: 0.12, out }); noise(t, 0.3, { f: 800, f2: 200, v: 0.3, out }); break;
+    // gulp + fizz
+    case 'drink': for (let i = 0; i < 3; i++) tone(t + i * 0.13, 0.09, { wave: 'sine', f: 220 + i * 30, f2: 120, v: 0.35, out }); noise(t + 0.4, 0.35, { type: 'highpass', f: 6000, v: 0.12, out }); break;
+    case 'stim': noise(t, 0.25, { type: 'bandpass', f: 1200, f2: 4000, q: 2, v: 0.3, out }); tone(t + 0.1, 0.5, { wave: 'sawtooth', f: 110, f2: 880, v: 0.07, out }); break;
+    case 'poison': tone(t, 0.5, { wave: 'sawtooth', f: 160, f2: 90, v: 0.12, out }); tone(t, 0.5, { wave: 'sawtooth', f: 167, f2: 95, v: 0.12, out }); break;
+    case 'door': noise(t, 0.12, { f: 400, v: 0.35, out }); tone(t, 0.1, { wave: 'sine', f: 120, f2: 70, v: 0.3, out }); noise(t + 0.15, 0.25, { type: 'bandpass', f: 1800, q: 3, v: 0.12, out }); break;
+    case 'cheat': [262, 392, 523, 784, 1046].forEach((f, i) => tone(t + i * 0.05, 0.3, { wave: 'triangle', f, v: 0.15, out })); noise(t, 0.4, { type: 'highpass', f: 5000, v: 0.15, out }); break;
+    case 'dance': tone(t, 0.08, { wave: 'square', f: 523, v: 0.08, out }); tone(t + 0.12, 0.08, { wave: 'square', f: 659, v: 0.08, out }); tone(t + 0.24, 0.12, { wave: 'square', f: 784, v: 0.08, out }); break;
     default: tone(t, 0.05, { f: 600, v: 0.1, out });
   }
 }

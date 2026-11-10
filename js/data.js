@@ -32,6 +32,12 @@ export const FACTIONS = [
     tiers: ['Pivete', 'Bandido Neon', 'Cromado', 'Pitbull Ciborgue', 'Paredão'],
     boss: 'Rei do Baile', biomes: { industrial: 3, favela: 3, suburb: 2, jungle: 1 },
   },
+  {
+    id: 3, name: 'Polícia Militar 2099', short: 'POLÍCIA', color: '#5a8aff', police: true,
+    uniform: '#22306a', uniform2: '#141c44', accent: '#5a8aff', skin: ['#c68a5e', '#e0b48c', '#8d5a3b'],
+    tiers: ['Soldado PM', 'Cabo PM', 'Choque', 'Drone PM', 'Mecha Choque'],
+    boss: 'Comandante', biomes: {},
+  },
 ];
 
 // ------------------------------------------------------------------ maps
@@ -166,7 +172,7 @@ export const EXPLOSION_PUSH = 300;       // knockback (px/s) at the center of an
 export const CIV = {
   perPlayer: 9,          // civilians kept around each player
   max: 46,               // in the whole city at once
-  hp: 30, speed: 26, fleeSpeed: 78,
+  hp: 45, speed: 26, fleeSpeed: 78,
   repStart: 45,          // starting reputation of a gang in a district (0..100)
   repOwnBonus: 25,       // extra reputation in your own districts
   repNeed: 30,           // reputation needed to recruit
@@ -241,9 +247,9 @@ export const PVP_BASE_NAMES = ['QG da Laje', 'QG do Morro', 'QG da Orla', 'QG do
 export const LOOK_OPTIONS = {
   skin: ['#f1c9a5', '#e0ac7e', '#c68a5e', '#a8714b', '#7a4a2e', '#4e2e1c'],
   hair: ['buzz', 'afro', 'braids', 'mohawk', 'long', 'cap', 'bald', 'bun'],
-  hairColor: ['#1a1414', '#4a2c1a', '#e3c16f', '#ff3fa4', '#22e5ff', '#3ddc84', '#f2f2f2', '#ff6a2b'],
-  jacket: ['#ff3f8e', '#22e5ff', '#ffd23f', '#3ddc84', '#ff8a3d', '#a66bff', '#f2f2f2', '#2b2b3a'],
-  pants: ['#23243a', '#3a5a8c', '#6b4b2a', '#1d1d1d', '#5a2a4a'],
+  hairColor: ['#1a1414', '#4a2c1a', '#e3c16f', '#ff3fa4', '#22e5ff', '#3ddc84', '#f2f2f2', '#ff6a2b', '#d01e2e', '#8a2a1a', '#a66bff', '#ffd23f', '#3a5aff', '#8a8a96'],
+  jacket: ['#ff3f8e', '#22e5ff', '#ffd23f', '#3ddc84', '#ff8a3d', '#a66bff', '#f2f2f2', '#2b2b3a', '#d01e2e', '#7a1424', '#3a5a8c', '#5a3a2a', '#ff9ad8', '#c8ff3f', '#1e6a4a', '#e8d8a0'],
+  pants: ['#23243a', '#3a5a8c', '#6b4b2a', '#1d1d1d', '#5a2a4a', '#a01e2a', '#c8c0b0', '#2a4a3a', '#e8e4d8', '#4a4a56'],
 };
 export const LOOK_KEYS = Object.keys(LOOK_OPTIONS);
 
@@ -303,4 +309,67 @@ export const BREAK_INFO = {
   gastank: { hp: 16, r: 46, dmg: 66, kind: 'fire' },
   transformer: { hp: 40, r: 48, dmg: 44, kind: 'zap' },
   car: { hp: 120, r: 52, dmg: 62, kind: 'fire' },
+};
+
+// ------------------------------------------------------------------ bar drinks and dealer stims (3-slot belt, keys 1/2/3)
+// eff: dmg (damage mult), speed, armor (damage taken mult), rof (cooldown mult), regen (HP/s), heal (fraction now),
+//      cure, ghost (enemies lose you), dash (dash cooldown), crit (extra crit chance), radar, cheat (survive one death)
+export const DRINKS = {
+  caipirinha: { name: 'Caipirinha Neon', price: 260, t: 180, eff: { dmg: 1.2 }, c: '#7dff9a', desc: '+20% damage for 3 min' },
+  guarana: { name: 'Guaraná Volt', price: 220, t: 180, eff: { speed: 1.25 }, c: '#ff3b3b', desc: '+25% move speed for 3 min' },
+  acai: { name: 'Açaí Nanotech', price: 240, t: 120, eff: { heal: 0.4, regen: 2 }, c: '#a66bff', desc: 'Heal 40% now, then +2 HP/s for 2 min' },
+  cerveja: { name: 'Cerveja Cromada', price: 200, t: 180, eff: { armor: 0.85, sway: 1 }, c: '#ffd23f', desc: 'Take 15% less damage for 3 min (a little tipsy)' },
+  chopp: { name: 'Chopp Turbo', price: 300, t: 150, eff: { rof: 0.8 }, c: '#ffb84a', desc: '+25% fire rate for 2.5 min' },
+  coco: { name: 'Água de Coco', price: 90, t: 0, eff: { cure: 1, heal: 0.15 }, c: '#e8f4d8', desc: 'Cures poison and burning, small heal' },
+};
+export const STIMS = {
+  porosa: { name: 'Pó Rosa', price: 700, t: 150, eff: { dmg: 1.5, knock: 2 }, c: '#ff3fa4', desc: '+50% damage and huge knockback for 2.5 min' },
+  balao: { name: 'Balão', price: 800, t: 100, eff: { ghost: 1, speed: 1.2 }, c: '#9af0ff', desc: 'Near-invisible: enemies and police lose you, +20% speed (100s)' },
+  pedra: { name: 'Pedra Azul', price: 700, t: 120, eff: { armor: 0.5 }, c: '#4f7bff', desc: 'Take 50% less damage for 2 min' },
+  lolo: { name: 'Loló', price: 600, t: 120, eff: { speed: 1.6, dash: 1 }, c: '#ffd23f', desc: '+60% speed and 1s dash cooldown for 2 min' },
+  bala: { name: 'Bala', price: 600, t: 150, eff: { crit: 0.3, radar: 1 }, c: '#ff8a3d', desc: '+30% crit chance, every enemy near you shows on the minimap (2.5 min)' },
+  doce: { name: 'Doce', price: 900, t: 240, eff: { cheat: 1 }, c: '#3ddc84', desc: 'Cheat death once in the next 4 min (get back up at 50% HP)' },
+};
+export const ITEMS = { ...DRINKS, ...STIMS };
+export const BELT_SIZE = 3;
+export const BAD_BATCH = { chance: 0.2, dps: 3, t: 20 };
+
+// ------------------------------------------------------------------ police
+// Crimes that civilians witness raise your heat. 100 heat = 1 star, up to 5.
+export const WANTED = {
+  shotSeen: 3,            // shooting with civilians nearby
+  hurtCiv: 25, killCiv: 60, boomSeen: 35, hitCop: 30, killCop: 45,
+  witnessRange: 11,       // tiles
+  decay: 1.5,             // heat lost per second while no cop is near
+  escapeRange: 24,        // tiles away from every cop...
+  escapeTime: 14,         // ...for this long and you lose them
+  bribe: 350,             // R$ per star to pay off your wanted level at your base
+};
+// what each wanted level sends (tiers of the police faction)
+export const POLICE_WAVES = [
+  null,
+  [1, 1],
+  [1, 1, 2, 2],
+  [1, 2, 2, 2, 3, 3],
+  [2, 3, 3, 3, 3, 4],
+  [3, 3, 3, 3, 4, 4, 5],
+];
+
+// ------------------------------------------------------------------ bar interior layout (pixels, interior space)
+// One shared layout (colors and names change per bar). Solid rects block movement.
+export const BAR_ROOM = {
+  w: 544, h: 304,
+  door: { x: 272, y: 300 },
+  counter: { x: 24, y: 64, w: 34, h: 176 },        // the bar counter along the left wall (bartender behind it)
+  dealer: { x: 486, y: 50 },                         // back corner, right
+  dj: { x: 220, y: 18, w: 104, h: 30 },             // DJ booth (top center)
+  floor: { x: 176, y: 80, w: 192, h: 128 },         // dancefloor
+  solids: [
+    { x: 0, y: 0, w: 544, h: 16 }, { x: 0, y: 0, w: 16, h: 304 }, { x: 528, y: 0, w: 16, h: 304 },
+    { x: 0, y: 288, w: 256, h: 16 }, { x: 288, y: 288, w: 256, h: 16 },
+    { x: 24, y: 64, w: 34, h: 176 },                 // counter
+    { x: 220, y: 18, w: 104, h: 30 },                // DJ booth
+    { x: 420, y: 120, w: 40, h: 24 }, { x: 420, y: 196, w: 40, h: 24 },   // tables
+    { x: 470, y: 230, w: 50, h: 40 },                // sofa booth
+  ],
 };

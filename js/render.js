@@ -8,14 +8,14 @@
 //   5. bloom, flying vehicles, holograms, silhouettes of players hidden behind buildings, tags and overlays
 // The game is drawn at low resolution (~640 px wide) and scaled up with crisp pixels.
 
-import { TILE, FACTIONS, WEAPONS, GANG_COLORS, VEHICLES, BRANDS } from './data.js';
+import { TILE, FACTIONS, WEAPONS, GANG_COLORS, VEHICLES, BRANDS, BAR_ROOM, ITEMS } from './data.js';
 import { T, CHUNK, STATION_COLORS } from './world.js';
 import {
   getTileset, charSprite, armSprite, propSprite, playerSpec, enemySpec, allySpec, followerSpec, civilianSpec, ENEMY_ARM,
-  flashOf, shade, rgba, mk, breakSprite, vehicleSprite, turretBase, turretHead, holoSprite, hexToRgb,
+  flashOf, shade, rgba, mk, breakSprite, vehicleSprite, turretBase, turretHead, holoSprite, hexToRgb, drawLogo,
 } from './sprites.js';
 import { CAM_Z, projK, buildingArt, bakeBuilding, neonState, neonIsOff } from './buildings.js';
-import { drawText } from './font.js';
+import { drawText, textSprite } from './font.js';
 import { hash2 } from './rng.js';
 
 const CH_PX = CHUNK * TILE;
@@ -43,7 +43,7 @@ export function createRenderer(canvas) {
     cam: { x: 0, y: 0 }, shake: 0, world: null, chunks: new Map(),
     particles: [], texts: [], effects: [], anim: new Map(), ghosts: [], decals: [],
     mouse: { x: 0, y: 0 }, time: 0, specCache: new Map(), flashT: 0, flashCol: '#ff0000', smokeT: 0,
-    quality: 'high', bakeBudget: 0, dynLights: [],
+    quality: 'high', bakeBudget: 0, dynLights: [], trans: new Map(),
   };
 
   R.resize = () => {
@@ -64,7 +64,11 @@ export function createRenderer(canvas) {
     // buildings bucketed by chunk for quick culling
     if (world) {
       R.bgrid = Array.from({ length: world.gridW * world.gridH }, () => []);
-      for (const b of world.buildings) {
+      const all = world.buildings.slice();
+      for (const Rg of world.regions) for (const w of Rg.compound.walls || []) {
+        all.push({ x: w.x, y: w.y, w: w.w, h: w.h, style: 'cwall', floors: 1, H: Rg.base ? 22 : 13, seed: (w.x * 7919 + w.y * 104729) % 1e9, compound: Rg.id, fr: 0 });
+      }
+      for (const b of all) {
         const gx = Math.min(world.gridW - 1, Math.floor((b.x + b.w / 2) / CHUNK)), gy = Math.min(world.gridH - 1, Math.floor((b.y + b.h / 2) / CHUNK));
         R.bgrid[gy * world.gridW + gx].push(b);
       }
@@ -134,6 +138,7 @@ export function createRenderer(canvas) {
     R.time += dt;
     const world = view.world;
     if (!world) return;
+    if (view.interior) { drawInterior(view, dt); return; }
     const me = view.me;
     const WW = world.W, HH = world.H;
     // camera (with a little look-ahead toward the mouse)
@@ -143,7 +148,8 @@ export function createRenderer(canvas) {
     R.cam.x += (tx - R.cam.x) * Math.min(1, dt * 7);
     R.cam.y += (ty - R.cam.y) * Math.min(1, dt * 7);
     R.shake = Math.max(0, R.shake - dt * 20);
-    const sx = (Math.random() - 0.5) * R.shake, sy = (Math.random() - 0.5) * R.shake;
+    let sx = (Math.random() - 0.5) * R.shake, sy = (Math.random() - 0.5) * R.shake;
+    if (view.sway) { sx += Math.sin(R.time * 0.9) * 5; sy += Math.sin(R.time * 0.63 + 1) * 3; }
     const ox = Math.round(R.cam.x - R.vw / 2 + sx), oy = Math.round(R.cam.y - R.vh / 2 + sy);
     R.ox = ox; R.oy = oy;
     const emq = [];
@@ -199,7 +205,7 @@ export function createRenderer(canvas) {
       for (const p of world.propGrid[gi]) if (inView(p.x, p.y)) list.push({ y: p.y, p });
       for (const b of world.breakGrid[gi]) if (inView(b.x, b.y)) list.push({ y: b.y, b });
     }
-    for (const p of view.players) if (!p.dead && !p.veh) list.push({ y: p.y, pl: p });
+    for (const p of view.players) if (!p.dead && !p.veh && !(p.bar >= 0)) list.push({ y: p.y, pl: p });
     for (const e of view.enemies) list.push({ y: e.y, en: e });
     for (const a of view.allies) list.push({ y: a.y, al: a });
     for (const c of view.civs || []) if (inView(c.x, c.y)) list.push({ y: c.y, cv: c });
@@ -239,13 +245,14 @@ export function createRenderer(canvas) {
     for (const [ch, cx, cy] of visChunks) if (ch.e) ctx.drawImage(ch.e, cx * CH_PX - ox, cy * CH_PX - oy);
     for (const q of emq) ctx.drawImage(q.s, q.x - ox, q.y - oy);
     ctx.translate(-ox, -oy);
+    drawCaptureRings(view);
     drawProjectiles(view.projectiles);
     drawEffects(dt);
     drawParticles(dt, 'em');
 
     // ---- 4. buildings
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    const drawn = drawBuildings(world, ox, oy, amb, night);
+    const drawn = drawBuildings(world, ox, oy, amb, night, view);
     // ---- 5. bloom, sky layer
     drawBloom(lights, ox, oy, night);
     ctx.translate(-ox, -oy);
@@ -254,6 +261,10 @@ export function createRenderer(canvas) {
     flying.sort((a, b) => a.y - b.y);
     for (const v of flying) drawVehicle(v, view, dt, null, ox, oy, true, amb);
     drawHolograms(world, ox, oy, night);
+    drawBunting(view, ox, oy);
+    drawFlags(view, ox, oy, night);
+    drawBaseSigns(view, ox, oy, night);
+    for (const c of view.pcars || []) drawPoliceCar(c, view, ox, oy, amb);
     drawTags(view, list, flying);
     drawTexts(dt);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -278,21 +289,22 @@ export function createRenderer(canvas) {
   };
 
   // ---------------------------------------------------------------- buildings (GTA2 perspective)
-  function drawBuildings(world, ox, oy, amb, night) {
+  function drawBuildings(world, ox, oy, amb, night, view) {
     const scx = R.vw / 2, scy = R.vh / 2;
     const margin = 260;
     const gx0 = Math.max(0, Math.floor((ox - margin) / CH_PX)), gx1 = Math.min(world.gridW - 1, Math.floor((ox + R.vw + margin) / CH_PX));
     const gy0 = Math.max(0, Math.floor((oy - margin) / CH_PX)), gy1 = Math.min(world.gridH - 1, Math.floor((oy + R.vh + margin) / CH_PX));
     const vis = [];
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) for (const b of R.bgrid[gy * world.gridW + gx]) {
-      const art = buildingArt(b);
+      const tint = b.compound !== undefined && (b.style === 'cwall' || b.style === 'hq' || b.style === 'shack') ? tintFor(view, b) : null;
+      const art = buildingArt(b, tint);
       const k = art.k;
       const x0 = b.x * TILE - ox, y0 = b.y * TILE - oy, x1 = x0 + art.W, y1 = y0 + art.D;
       const rx0 = scx + (x0 - scx) * k, rx1 = scx + (x1 - scx) * k, ry0 = scy + (y0 - scy) * k, ry1 = scy + (y1 - scy) * k;
       const bx0 = Math.min(x0, rx0), bx1 = Math.max(x1, rx1), by0 = Math.min(y0, ry0), by1 = Math.max(y1, ry1);
       if (bx1 < 0 || by1 < 0 || bx0 > R.vw || by0 > R.vh) continue;
       const cx = (x0 + x1) / 2 - scx, cy = (y0 + y1) / 2 - scy;
-      vis.push({ b, art, x0, y0, x1, y1, rx0, rx1, ry0, ry1, bx0, bx1, by0, by1, d: cx * cx + cy * cy });
+      vis.push({ b, art, tint, x0, y0, x1, y1, rx0, rx1, ry0, ry1, bx0, bx1, by0, by1, d: cx * cx + cy * cy });
     }
     vis.sort((a, b) => b.d - a.d);
     const litFrac = 0.12 + night * 0.5;
@@ -304,7 +316,7 @@ export function createRenderer(canvas) {
       const epoch = Math.floor((R.time + (b.seed % 37)) / 38);
       let baked = v.art.baked;
       const key = bAmb.map((x) => Math.round(x * 24)).join(',') + '|' + epoch + '|' + Math.round(litFrac * 10);
-      if (!baked || (v.art.bakeKey !== key && R.bakeBudget-- > 0)) baked = bakeBuilding(b, bAmb, epoch, litFrac);
+      if (!baked || (v.art.bakeKey !== key && (R.bakeBudget-- > 0 || v.tint))) baked = bakeBuilding(b, bAmb, epoch, litFrac, v.tint);
       const st = neonState(v.art.anim, v.art.seed, R.time);
       drawBox(v, baked, st, scx, scy);
     }
@@ -452,6 +464,7 @@ export function createRenderer(canvas) {
     for (const p of R.particles) if (p.fire && fire++ < 36 && near(p.x, p.y, 30)) out.push({ x: p.x, y: p.y, r: 30, c: '#ff8a3d', i: 0.55, bloom: fire % 3 === 0 });
     for (const e of view.enemies) if (e.burn) out.push({ x: e.x, y: e.y - 8, r: 34, c: '#ff8a3d', i: 0.7 });
     for (const h of world.holos) if (near(h.x, h.y, 90)) out.push({ x: h.x, y: h.y + 10, r: 80, c: BRANDS[h.brand].c, i: 0.6 });
+    for (const l of R.policeLights(view)) out.push(l);
     R.dynLights = R.dynLights.filter((l) => (l.t += dt) < l.life);
     for (const l of R.dynLights) {
       const k = 1 - l.t / l.life;
@@ -562,18 +575,6 @@ export function createRenderer(canvas) {
       const rs = view.rs[Rg.id];
       if (!rs) continue;
       const col = ownerColor(rs.owner);
-      const pulse = 0.5 + Math.sin(R.time * 3) * 0.2;
-      ctx.globalAlpha = 0.6 * pulse;
-      pixCircle(x, y + 2, 2.6 * TILE, col);
-      ctx.globalAlpha = 1;
-      if (rs.capture > 0) {
-        const n = 48;
-        ctx.fillStyle = rs.capBy === 'raid' ? '#ff3b5c' : rs.capBy !== null && rs.capBy !== undefined ? ownerColor(rs.capBy) : '#ff3b5c';
-        for (let i = 0; i < n * rs.capture; i++) {
-          const a = -Math.PI / 2 + (i / n) * Math.PI * 2;
-          ctx.fillRect(Math.round(x + Math.cos(a) * 2.6 * TILE), Math.round(y + 2 + Math.sin(a) * 2.6 * TILE * 0.75), 2, 2);
-        }
-      }
       const up = rs.up;
       if (up) {
         if (up.radar) {
@@ -625,6 +626,17 @@ export function createRenderer(canvas) {
   }
 
   function drawCoreProp(p, view) {
+    const rs0 = view.rs[p.region];
+    if (!rs0) return;
+    const col0 = ownerColor(rs0.owner);
+    const x0 = Math.round(p.x), y0 = Math.round(p.y);
+    ctx.fillStyle = '#14121c'; ctx.fillRect(x0 - 8, y0 - 3, 16, 5);
+    ctx.fillStyle = '#3a3646'; ctx.fillRect(x0 - 7, y0 - 5, 14, 3); ctx.fillStyle = '#5a566a'; ctx.fillRect(x0 - 7, y0 - 5, 14, 1);
+    ctx.fillStyle = '#2a2636'; ctx.fillRect(x0 - 2, y0 - 22, 4, 18); ctx.fillStyle = '#4e4a5c'; ctx.fillRect(x0 - 2, y0 - 22, 1, 18);
+    ctx.fillStyle = '#3a3646'; ctx.fillRect(x0 - 5, y0 - 24, 10, 3);
+    ctx.fillStyle = col0; ctx.fillRect(x0 - 4, y0 - 23, 8, 1); ctx.fillRect(x0 - 6, y0 - 2, 12, 1);
+    for (let i = 0; i < 3; i++) { ctx.fillStyle = Math.floor(R.time * 6 + i) % 3 === 0 ? '#ffffff' : col0; ctx.fillRect(x0 - 1, y0 - 19 + i * 5, 2, 2); }
+    return;
     const rs = view.rs[p.region];
     if (!rs) return;
     const col = ownerColor(rs.owner);
@@ -742,8 +754,11 @@ export function createRenderer(canvas) {
     const eq = p.equip || { L: 'fist', R: 'pistol' };
     const arms = [{ slot: 'L', kind: eq.L, color: '#aeb9c9' }, { slot: 'R', kind: eq.R, color: '#aeb9c9' }];
     const isMe = view.me && p.id === view.me.id;
+    if (p.emote) { const s0 = drawDancer(key, p.x, p.y, spec, p.emote - 1, dt); p._top = s0.top; return; }
     let alpha;
     if (p.cloak) alpha = isMe ? 0.35 : 0.1 + Math.abs(Math.sin(R.time * 9)) * 0.08;
+    if (p.ghost) alpha = isMe ? 0.4 : 0.15 + Math.abs(Math.sin(R.time * 5)) * 0.1;
+    if (p.fury && Math.random() < 0.3) R.particles.push({ x: p.x + (Math.random() - 0.5) * 8, y: p.y - Math.random() * 18, vx: 0, vy: -24, life: 0.4, t: 0, c: Math.random() < 0.5 ? '#ff3fa4' : '#ff3b3b', g: 0, sz: 1, em: true });
     if (p.inv && Math.floor(R.time * 12) % 2) alpha = 0.5;
     const s = drawCharacter(key, p.x, p.y, p.aim, spec, arms, dt, { alpha, moving: isMe ? view.meMoving : undefined, burn: p.burn });
     p._top = s.top;
@@ -1226,6 +1241,416 @@ export function createRenderer(canvas) {
     }
   }
 
+  // ---------------------------------------------------------------- compounds: owner colors, capture transition
+  const EMBLEM = (o) => (typeof o === 'string' && o[0] === 'g' ? ['flame', 'bolt', 'heart', 'coin', 'gear', 'ball'][Number(o.slice(1))] || 'star' : ['star', 'tri', 'speaker', 'eye'][o] || 'star');
+  // a district changed hands: walls repaint in a wave from the flag outward, the flag glitches into the new colors
+  R.capture = (region, from, to) => {
+    const Rg = R.world.regions[region];
+    if (!Rg) return;
+    const C = Rg.compound;
+    const x = (C.coreX + 0.5) * TILE, y = (C.coreY + 0.5) * TILE;
+    const toC = ownerColorOf(to);
+    R.trans.set(region, { t0: R.time, from: ownerColorOf(from), to: toC, x, y, maxR: Math.hypot(C.w, C.h) * TILE * 0.6 });
+    R.effect({ k: 'shock', x, y, r: Math.hypot(C.w, C.h) * TILE * 0.7, life: 1.4, c: toC });
+    R.effect({ k: 'shock', x, y, r: Math.hypot(C.w, C.h) * TILE * 0.45, life: 1.0, c: '#ffffff' });
+    R.effect({ k: 'pillar', x, y: y - 20, c: toC, life: 1.4 });
+    R.burst(x, y - 40, [toC, '#ffffff', shade(toC, 0.4)], 70, 160, 1.6, 60, true);
+    R.dynLights.push({ x, y, r: 260, c: toC, life: 2.2, t: 0, i: 2, boom: true });
+    R.text(x, y - 70, 'DOMINADO!', toC, 2.4, -10);
+  };
+  function tintFor(view, b) {
+    const rs = view.rs[b.compound];
+    if (!rs) return '#888888';
+    const now = ownerColorOf(rs.owner);
+    const tr = R.trans.get(b.compound);
+    if (!tr) return now;
+    const age = R.time - tr.t0;
+    if (age > 2.4) { R.trans.delete(b.compound); return now; }
+    const d = Math.hypot((b.x + b.w / 2) * TILE - tr.x, (b.y + b.h / 2) * TILE - tr.y);
+    const reached = d < (age / 1.6) * tr.maxR;
+    const col = reached ? tr.to : tr.from;
+    if (reached && b._wave !== tr.t0) {
+      b._wave = tr.t0;
+      for (let i = 0; i < 6; i++) R.particles.push({ x: (b.x + Math.random() * b.w) * TILE, y: (b.y + Math.random() * b.h) * TILE - 6, vx: (Math.random() - 0.5) * 30, vy: -40 - Math.random() * 40, life: 0.7, t: 0, c: Math.random() < 0.5 ? tr.to : '#ffffff', g: 40, sz: 2, em: true, hi: true });
+    }
+    return col;
+  }
+
+  // animated capture ring around every flag: rotating dashes, ticks, and a glowing progress arc
+  function drawCaptureRings(view) {
+    for (const Rg of view.world.regions) {
+      const C = Rg.compound;
+      const x = (C.coreX + 0.5) * TILE, y = (C.coreY + 0.5) * TILE + 2;
+      if (x < R.ox - 80 || x > R.ox + R.vw + 80 || y < R.oy - 80 || y > R.oy + R.vh + 80) continue;
+      const rs = view.rs[Rg.id];
+      if (!rs) continue;
+      const col = ownerColor(rs.owner);
+      const r = 2.6 * TILE, t = R.time;
+      const pt = (a, rr) => [Math.round(x + Math.cos(a) * rr), Math.round(y + Math.sin(a) * rr * 0.72)];
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = col;
+      for (let i = 0; i < 28; i++) { const a0 = t * 0.4 + (i / 28) * Math.PI * 2; for (let k = 0; k < 3; k++) { const [px, py] = pt(a0 + k * 0.03, r); ctx.fillRect(px, py, 1, 1); } }
+      ctx.globalAlpha = 0.35;
+      for (let i = 0; i < 40; i++) { const [px, py] = pt(-t * 0.7 + (i / 40) * Math.PI * 2, r - 5); if (i % 2) ctx.fillRect(px, py, 1, 1); }
+      ctx.globalAlpha = 0.5 + Math.sin(t * 4) * 0.3;
+      for (let q = 0; q < 4; q++) {
+        const a = q * Math.PI / 2;
+        for (let k = 0; k < 3; k++) { const [px, py] = pt(a - 0.06 + k * 0.06, r + 4 - Math.abs(k - 1) * 2); ctx.fillRect(px - 1, py - 1, 2, 2); }
+      }
+      ctx.globalAlpha = 1;
+      if (rs.capture > 0) {
+        const cc = rs.capBy === 'raid' ? '#ff3b5c' : rs.capBy !== null && rs.capBy !== undefined ? ownerColor(rs.capBy) : '#ff3b5c';
+        ctx.globalAlpha = 0.12 + Math.sin(t * 8) * 0.05;
+        ctx.fillStyle = cc;
+        pixCircleFill(x, y, r - 2, 0.72);
+        ctx.globalAlpha = 1;
+        const n = 90, m = Math.floor(n * rs.capture);
+        for (let i = 0; i <= m; i++) {
+          const a = -Math.PI / 2 + (i / n) * Math.PI * 2;
+          const [px, py] = pt(a, r);
+          ctx.fillStyle = i >= m - 2 ? '#ffffff' : cc;
+          ctx.fillRect(px - 1, py - 1, 3, 3);
+        }
+        if (Math.random() < 0.5) { const a = -Math.PI / 2 + rs.capture * Math.PI * 2; const [px, py] = pt(a, r); R.particles.push({ x: px, y: py, vx: (Math.random() - 0.5) * 20, vy: -30, life: 0.6, t: 0, c: cc, g: 0, sz: 1, em: true }); }
+      }
+    }
+  }
+
+  // holographic flags floating above each compound's pylon: waving, scanlines, glitches
+  const flagCache = new Map();
+  function flagCanvas(owner) {
+    const key = String(owner);
+    let c = flagCache.get(key);
+    if (c) return c;
+    const col = ownerColorOf(owner);
+    c = mk(30, 18);
+    const g = c.getContext('2d');
+    const F = (x, y, w, h, cl) => { g.fillStyle = cl; g.fillRect(x, y, w, h); };
+    F(0, 0, 30, 18, rgba(col, 0.35));
+    F(0, 0, 30, 1, col); F(0, 17, 30, 1, col); F(0, 0, 1, 18, col); F(29, 0, 1, 18, col);
+    for (let y = 2; y < 17; y += 4) F(1, y, 28, 1, rgba(col, 0.25));
+    drawLogo(F, EMBLEM(owner), 8, 2, '#ffffff', col, 2);
+    g.globalCompositeOperation = 'destination-out';
+    for (let y = 1; y < 18; y += 2) { g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(0, y, 30, 1); }
+    flagCache.set(key, c);
+    return c;
+  }
+  function drawFlags(view, ox, oy, night) {
+    const scx = ox + R.vw / 2, scy = oy + R.vh / 2;
+    const k = projK(34);
+    ctx.globalCompositeOperation = 'lighter';
+    for (const Rg of view.world.regions) {
+      const C = Rg.compound;
+      const bx = (C.coreX + 0.5) * TILE, by = (C.coreY + 0.5) * TILE;
+      if (bx < ox - 100 || bx > ox + R.vw + 100 || by < oy - 60 || by > oy + R.vh + 120) continue;
+      const rs = view.rs[Rg.id];
+      if (!rs) continue;
+      const tr = R.trans.get(Rg.id);
+      const age = tr ? R.time - tr.t0 : 9;
+      const owner = rs.owner;
+      const col = ownerColor(owner);
+      const X = Math.round(scx + (bx - scx) * k), Y = Math.round(scy + (by - 22 - scy) * k);
+      const top = Y - 34;
+      // projector beam from the pylon to the flag
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = col;
+      for (let y = top; y < Y; y += 2) ctx.fillRect(X, y, 1, 1);
+      ctx.globalAlpha = 0.15;
+      ctx.fillRect(X - 2, top, 5, Y - top);
+      const f = flagCanvas(owner);
+      const glitch = age < 0.9 || Math.random() < 0.015;
+      const base = (0.6 + 0.3 * night) * (age < 0.9 ? 0.4 + Math.random() * 0.6 : 0.85 + Math.random() * 0.15);
+      for (let x = 0; x < f.width; x++) {
+        const wave = Math.sin(R.time * 3.2 + x * 0.32) * 2.2 * (x / f.width) + (glitch && Math.random() < 0.2 ? (Math.random() - 0.5) * 6 : 0);
+        ctx.globalAlpha = base;
+        ctx.drawImage(f, x, 0, 1, f.height, X + 2 + x, Math.round(top + wave), 1, f.height);
+      }
+      if (age < 0.4) { ctx.globalAlpha = 1 - age / 0.4; ctx.fillStyle = '#ffffff'; ctx.fillRect(X + 2, top - 2, f.width, f.height + 4); }
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // hologram labels over the main base buildings (ARSENAL, CLINICA, ARMARIO, COFRE, GARAGEM)
+  const labelCache = new Map();
+  const LABEL = { arsenal: 'ARSENAL', clinic: 'CLINICA', locker: 'ARMARIO', vault: 'COFRE', garage: 'GARAGEM' };
+  const LABEL_ICON = { arsenal: 'star', clinic: 'cross', locker: 'box', vault: 'coin', garage: 'gear' };
+  function labelCanvas(kind) {
+    let c = labelCache.get(kind);
+    if (c) return c;
+    const col = STATION_COLORS[kind] || '#ffffff';
+    const t = textSprite(LABEL[kind], col, null);
+    const w = t.width * 2 + 22, h = 16;
+    c = mk(w, h);
+    const g = c.getContext('2d');
+    g.fillStyle = rgba(col, 0.18); g.fillRect(0, 0, w, h);
+    g.fillStyle = col; g.fillRect(0, 0, w, 1); g.fillRect(0, h - 1, w, 1);
+    drawLogo((x, y, ww, hh, cl) => { g.fillStyle = cl; g.fillRect(x, y, ww, hh); }, LABEL_ICON[kind], 3, 4, col, '#ffffff');
+    g.imageSmoothingEnabled = false;
+    g.drawImage(t, 0, 0, t.width, t.height, 14, 3, t.width * 2, t.height * 2);
+    g.globalCompositeOperation = 'destination-out';
+    for (let y = 1; y < h; y += 2) { g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(0, y, w, 1); }
+    labelCache.set(kind, c);
+    return c;
+  }
+  function drawBaseSigns(view, ox, oy, night) {
+    const scx = ox + R.vw / 2, scy = oy + R.vh / 2;
+    ctx.globalCompositeOperation = 'lighter';
+    for (const b0 of view.world.bases) {
+      const C = view.world.regions[b0].compound;
+      if (!C.stations || C.small) continue;
+      for (const st of C.stations) {
+        const b = st.b;
+        if (!b) continue;
+        const wx = (b.x + b.w / 2) * TILE, wy = (b.doorN ? b.y + b.h - 0.8 : b.y + 0.8) * TILE;
+        if (wx < ox - 120 || wx > ox + R.vw + 120 || wy < oy - 120 || wy > oy + R.vh + 140) continue;
+        const z = (b.H || 30) + 8;
+        const k = projK(z);
+        const X = scx + (wx - scx) * k, Y = scy + (wy - scy) * k;
+        const c = labelCanvas(st.kind);
+        ctx.globalAlpha = (0.55 + 0.35 * night) * (Math.random() < 0.03 ? 0.4 : 1);
+        ctx.drawImage(c, Math.round(X - c.width / 2), Math.round(Y - c.height / 2 + Math.sin(R.time * 1.7 + wx) * 1.5));
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // little flags strung between the outpost shacks, in the owner's color
+  function drawBunting(view, ox, oy) {
+    const scx = ox + R.vw / 2, scy = oy + R.vh / 2;
+    const k = projK(20);
+    for (const Rg of view.world.regions) {
+      const C = Rg.compound;
+      if (!C.bunting || !C.bunting.length) continue;
+      const cx = (C.coreX + 0.5) * TILE, cy = (C.coreY + 0.5) * TILE;
+      if (cx < ox - 150 || cx > ox + R.vw + 150 || cy < oy - 150 || cy > oy + R.vh + 150) continue;
+      const rs = view.rs[Rg.id];
+      if (!rs) continue;
+      const col = ownerColor(rs.owner);
+      for (const w of C.bunting) {
+        const x1 = scx + (w.x1 - scx) * k, y1 = scy + (w.y1 - scy) * k, x2 = scx + (w.x2 - scx) * k, y2 = scy + (w.y2 - scy) * k;
+        const len = Math.hypot(x2 - x1, y2 - y1), n = Math.ceil(len / 2);
+        for (let i = 0; i <= n; i++) {
+          const t = i / n, x = x1 + (x2 - x1) * t, y = y1 + (y2 - y1) * t + Math.sin(t * Math.PI) * len * 0.07;
+          ctx.fillStyle = '#1a1418'; ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
+          if (i % 4 === 0) { const sway = Math.sin(R.time * 4 + i) > 0 ? 1 : 0; ctx.fillStyle = (i / 4) % 2 ? '#f2f2f2' : col; ctx.fillRect(Math.round(x) - 1, Math.round(y) + 1, 3, 2); ctx.fillRect(Math.round(x) + sway - 0, Math.round(y) + 3, 1, 1); }
+        }
+      }
+    }
+  }
+
+  // police patrol car: flies in with sirens, drops the cops, flies away
+  function drawPoliceCar(c, view, ox, oy, amb) {
+    if (c.x < ox - 100 || c.x > ox + R.vw + 100 || c.y < oy - 100 || c.y > oy + R.vh + 100) return;
+    const scx = ox + R.vw / 2, scy = oy + R.vh / 2;
+    const alt = c.state === 1 ? 10 : 24;
+    const k = projK(alt);
+    const X = scx + (c.x - scx) * k, Y = scy + (c.y - scy) * k;
+    shadow(c.x, c.y, 14, 0.3);
+    const s = vehicleSprite('car', c.dir, '#22306a', Math.floor(R.time * 10) % 2);
+    try { ctx.filter = `brightness(${Math.max(0.4, (amb[0] + amb[1] + amb[2]) / 3 + 0.25).toFixed(2)})`; } catch { /* no filters */ }
+    ctx.drawImage(s, Math.round(X - s.ax), Math.round(Y - alt - s.ay));
+    try { ctx.filter = 'none'; } catch { /* ignore */ }
+    if (s.em) ctx.drawImage(s.em, Math.round(X - s.ax), Math.round(Y - alt - s.ay));
+    const on = Math.floor(R.time * 8) % 2;
+    ctx.fillStyle = on ? '#ff3b3b' : '#3a5aff'; ctx.fillRect(Math.round(X - 5), Math.round(Y - alt - s.ay + 2), 4, 2);
+    ctx.fillStyle = on ? '#3a5aff' : '#ff3b3b'; ctx.fillRect(Math.round(X + 1), Math.round(Y - alt - s.ay + 2), 4, 2);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.5;
+    pixCircle(c.x, c.y, 14 + (R.time * 20) % 6, on ? '#ff3b3b' : '#3a5aff', 0.5);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  R.policeLights = (view) => {
+    const out = [];
+    const on = Math.floor(R.time * 8) % 2;
+    for (const c of view.pcars || []) { out.push({ x: c.x - 10, y: c.y, r: 90, c: on ? '#ff2a2a' : '#2a4aff', i: 1.1, bloom: true }); out.push({ x: c.x + 10, y: c.y, r: 70, c: on ? '#2a4aff' : '#ff2a2a', i: 0.9, bloom: true }); }
+    for (const e of view.enemies) if (e.faction === 3 && Math.random() < 0.5) out.push({ x: e.x, y: e.y - 14, r: 26, c: (Math.floor(R.time * 6) + e.id) % 2 ? '#ff2a2a' : '#2a4aff', i: 0.6 });
+    return out;
+  };
+
+  // ---------------------------------------------------------------- dancing (emote and the bar crowd)
+  // style 0: passinho (fast footwork), 1: crip walk (side to side), 2: rebolado (shake it)
+  function drawDancer(key, x, y, spec, style, dt, phase = 0) {
+    stepAnim(key, x, y, dt);
+    const t = R.time + phase;
+    let dir = 0, frame = 0, dx = 0, dy = 0, sxs = 1;
+    if (style === 0) { frame = 1 + (Math.floor(t * 12) % 4); dir = Math.floor(t * 2) % 2 ? 0 : (Math.floor(t * 4) % 2 ? 1 : 2); dy = -Math.abs(Math.sin(t * 10)) * 2; dx = Math.sin(t * 6) * 1.5; }
+    else if (style === 1) { dir = Math.floor(t * 3) % 2 ? 1 : 2; frame = Math.floor(t * 6) % 2 ? 1 : 3; dx = Math.sin(t * 3 * Math.PI) * 3; dy = -Math.abs(Math.sin(t * 6)); }
+    else { dir = 3; dx = Math.sin(t * 22) * 1.2; sxs = 1 + Math.sin(t * 22) * 0.12; dy = Math.sin(t * 11) * 0.8 + 1; }
+    const s = charSprite(spec, dir, frame);
+    shadow(x, y, Math.max(4, Math.round(s.width * 0.3)));
+    ctx.save();
+    ctx.translate(Math.round(x + dx), Math.round(y + dy));
+    ctx.scale(sxs, 1);
+    ctx.drawImage(s, -s.ax, -s.ay);
+    ctx.restore();
+    if (Math.random() < 0.05) R.particles.push({ x: x + (Math.random() - 0.5) * 10, y: y - s.top, vx: (Math.random() - 0.5) * 10, vy: -22, life: 0.8, t: 0, c: Math.random() < 0.5 ? '#ff3fa4' : '#22e5ff', g: 0, sz: 2, em: true });
+    return s;
+  }
+
+  // ---------------------------------------------------------------- bar interiors
+  const barCache = new Map();
+  function barRoom(bar) {
+    let c = barCache.get(bar.id);
+    if (c) return c;
+    const W = BAR_ROOM.w, H = BAR_ROOM.h;
+    c = mk(W, H);
+    const g = c.getContext('2d');
+    const P = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(Math.round(x), Math.round(y), w, h); };
+    let sd = bar.seed || 1;
+    const rnd = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+    // floor: dark wooden planks
+    P(0, 0, W, H, '#241820');
+    for (let y = 0; y < H; y += 8) for (let x = ((y / 8) % 2) * 12; x < W; x += 24) { P(x, y, 23, 7, rnd() < 0.5 ? '#2c1d27' : '#2a1b25'); P(x, y, 23, 1, '#33222e'); }
+    // walls
+    P(0, 0, W, 16, '#1a1022'); for (let x = 0; x < W; x += 8) P(x + ((x / 8) % 2) * 4, 3, 7, 4, '#24142e');
+    P(0, 0, 16, H, '#160c1e'); P(W - 16, 0, 16, H, '#160c1e');
+    P(0, H - 16, 256, 16, '#160c1e'); P(288, H - 16, 256, 16, '#160c1e');
+    P(256, H - 16, 32, 16, '#3a2a32'); for (let x = 258; x < 288; x += 4) P(x, H - 14, 2, 12, '#4a3a42');
+    // posters
+    for (let i = 0; i < 4; i++) { const x = 70 + i * 34; if (x > 200 && x < 340) continue; P(x, 2, 14, 12, ['#ff3f8e', '#ffd23f', '#22e5ff', '#3ddc84'][i]); P(x + 2, 4, 10, 2, '#120a1c'); P(x + 2, 8, 6, 1, '#120a1c'); }
+    // shelf with bottles behind the counter
+    P(16, 56, 8, 192, '#3a2418');
+    for (let y = 60; y < 244; y += 6) for (let i = 0; i < 2; i++) P(17 + i * 3, y, 2, 4, ['#3ddc84', '#ff8a3d', '#ffd23f', '#9af0ff', '#ff3fa4', '#c8a060'][(rnd() * 6) | 0]);
+    // the counter
+    const K = BAR_ROOM.counter;
+    P(K.x, K.y, K.w, K.h, '#5a3424'); P(K.x, K.y, K.w, 3, '#8a5a3a'); P(K.x + K.w - 6, K.y, 6, K.h, '#3a2016');
+    for (let y = K.y + 10; y < K.y + K.h - 6; y += 22) { P(K.x + 6, y, 4, 6, '#c8e8f0'); P(K.x + 16, y + 8, 3, 5, '#ffb84a'); }
+    for (let y = K.y + 14; y < K.y + K.h; y += 26) { P(K.x + K.w + 8, y, 10, 10, '#2a1a22'); P(K.x + K.w + 9, y + 1, 8, 4, '#a01e2a'); }
+    // DJ booth with speakers (paredão)
+    const D = BAR_ROOM.dj;
+    for (const sx of [D.x - 30, D.x + D.w + 4]) { P(sx, 14, 26, 40, '#120a1c'); for (const [cx, cy] of [[sx + 13, 24], [sx + 13, 42]]) { P(cx - 8, cy - 7, 16, 14, '#241634'); P(cx - 5, cy - 4, 10, 8, '#3a2a50'); P(cx - 2, cy - 1, 4, 3, '#0a0610'); } }
+    P(D.x, D.y, D.w, D.h, '#1a1426'); P(D.x, D.y, D.w, 2, '#3a3046');
+    for (const tx of [D.x + 16, D.x + D.w - 34]) { P(tx, D.y + 6, 18, 18, '#0e0a14'); P(tx + 3, D.y + 9, 12, 12, '#2a2a36'); P(tx + 8, D.y + 14, 2, 2, '#c8c8d0'); }
+    P(D.x + 42, D.y + 8, 20, 14, '#2a2636');
+    // tables, sofa
+    for (const T of BAR_ROOM.solids.slice(7, 9)) { P(T.x, T.y, T.w, T.h, '#3a2418'); P(T.x, T.y, T.w, 2, '#5a3a28'); P(T.x + 6, T.y + 6, 4, 6, '#c8e8f0'); P(T.x + T.w - 12, T.y + 8, 4, 6, '#ffb84a'); for (const cx of [T.x - 8, T.x + T.w + 2]) P(cx, T.y + 6, 6, 12, '#2a1a22'); }
+    const S = BAR_ROOM.solids[9];
+    P(S.x, S.y, S.w, S.h, '#7a1424'); P(S.x, S.y, S.w, 8, '#a01e2a'); P(S.x + 4, S.y + 12, S.w - 8, S.h - 16, '#5a0e1a');
+    // dealer corner: a dirty rug and a low table
+    P(470, 24, 54, 54, '#1a1a14'); for (let i = 0; i < 6; i++) P(474 + i * 8, 28, 4, 46, '#22221a');
+    P(492, 62, 20, 10, '#2a2420'); P(496, 64, 4, 3, '#ff3fa4'); P(504, 65, 3, 3, '#9af0ff');
+    // dancefloor frame
+    const F = BAR_ROOM.floor;
+    P(F.x - 2, F.y - 2, F.w + 4, F.h + 4, '#0a0610');
+    barCache.set(bar.id, c);
+    return c;
+  }
+
+  function barNPCs(bar) {
+    if (bar._npcs) return bar._npcs;
+    let sd = (bar.seed || 7) + 13;
+    const rnd = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+    const F = BAR_ROOM.floor, npcs = [];
+    for (let i = 0; i < 9; i++) npcs.push({ kind: 'dance', x: F.x + 14 + rnd() * (F.w - 28), y: F.y + 18 + rnd() * (F.h - 24), seed: (rnd() * 1e5) | 0, style: (rnd() * 3) | 0, ph: rnd() * 10 });
+    for (let i = 0; i < 4; i++) npcs.push({ kind: 'sit', x: BAR_ROOM.counter.x + BAR_ROOM.counter.w + 13, y: BAR_ROOM.counter.y + 26 + i * 52, seed: (rnd() * 1e5) | 0, dir: 1 });
+    for (const T of BAR_ROOM.solids.slice(7, 9)) npcs.push({ kind: 'sit', x: T.x - 5, y: T.y + 18, seed: (rnd() * 1e5) | 0, dir: 2 }, { kind: 'sit', x: T.x + T.w + 5, y: T.y + 18, seed: (rnd() * 1e5) | 0, dir: 1 });
+    npcs.push({ kind: 'sit', x: 486, y: 262, seed: (rnd() * 1e5) | 0, dir: 0 }, { kind: 'sit', x: 504, y: 262, seed: (rnd() * 1e5) | 0, dir: 0 });
+    bar._npcs = npcs;
+    return npcs;
+  }
+
+  function drawInterior(view, dt) {
+    const I = view.interior, bar = I.bar;
+    const W = BAR_ROOM.w, H = BAR_ROOM.h;
+    const me = I.me;
+    let offX = Math.round((R.vw - W) / 2), offY = Math.round(Math.min((R.vh - H) / 2, 4));
+    if (R.vw < W) offX = Math.round(Math.max(R.vw - W, Math.min(0, R.vw / 2 - me.x)));
+    if (R.vh < H) offY = Math.round(Math.max(R.vh - H, Math.min(0, R.vh / 2 - me.y)));
+    const t = R.time, beat = (t * 124 / 60) % 1;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+    ctx.fillStyle = '#05030a'; ctx.fillRect(0, 0, R.vw, R.vh);
+    ctx.translate(offX, offY);
+    ctx.drawImage(barRoom(bar), 0, 0);
+    const F0 = BAR_ROOM.floor, pal0 = ['#ff3fa4', '#22e5ff', '#a66bff', '#ffd23f', '#3ddc84'];
+    const tileOn = (gx, gy) => ((gx * 7 + gy * 3 + Math.floor(t * 124 / 60)) % 4) === 0;
+    for (let gy = 0; gy < F0.h / 16; gy++) for (let gx = 0; gx < F0.w / 16; gx++) {
+      ctx.fillStyle = tileOn(gx, gy) ? pal0[(gx + gy + Math.floor(t * 2.07)) % pal0.length] : shade(pal0[(gx + gy + Math.floor(t * 2.07)) % pal0.length], -0.65);
+      ctx.fillRect(F0.x + gx * 16 + 1, F0.y + gy * 16 + 1, 14, 14);
+    }
+    // sprites
+    const list = [];
+    for (const n of barNPCs(bar)) list.push({ y: n.y, n });
+    list.push({ y: BAR_ROOM.counter.y + 40 + Math.sin(t * 0.5) * 60, bt: true });
+    list.push({ y: BAR_ROOM.dj.y + 2, dj: true });
+    if (bar.dealer) list.push({ y: BAR_ROOM.dealer.y, dealer: true });
+    for (const p of I.players) list.push({ y: p.y, p });
+    list.sort((a, b) => a.y - b.y);
+    for (const d of list) {
+      if (d.n) {
+        const spec = specFor('C' + d.n.seed, () => civilianSpec(d.n.seed));
+        if (d.n.kind === 'dance') drawDancer('bn' + bar.id + d.n.seed, d.n.x, d.n.y, spec, d.n.style, dt, d.n.ph);
+        else { const s = charSprite(spec, d.n.dir, 0); ctx.drawImage(s, Math.round(d.n.x - s.ax), Math.round(d.n.y - s.ay + 2)); }
+      } else if (d.bt) {
+        const spec = specFor('BT' + bar.id, () => Object.assign(civilianSpec(bar.seed + 5), { top: '#f2f2f2', top2: '#2a2a36' }));
+        const s = charSprite(spec, 2, 0);
+        ctx.drawImage(s, Math.round(BAR_ROOM.counter.x + 8 - s.ax), Math.round(d.y - s.ay));
+      } else if (d.dj) {
+        const spec = specFor('DJ' + bar.id, () => Object.assign(civilianSpec(bar.seed + 9), { headphones: true, top: '#2b2b3a', visor: '#22e5ff' }));
+        const s = charSprite(spec, 0, Math.floor(t * 4) % 2 ? 2 : 0);
+        ctx.drawImage(s, Math.round(BAR_ROOM.dj.x + BAR_ROOM.dj.w / 2 - s.ax), Math.round(BAR_ROOM.dj.y + 10 - s.ay - (beat < 0.2 ? 1 : 0)));
+      } else if (d.dealer) {
+        const spec = specFor('DL' + bar.id, () => Object.assign(civilianSpec(bar.seed + 3), { mask: 'balaclava', top: '#1a1a22', pants: '#1a1a22' }));
+        const s = charSprite(spec, 0, 0);
+        ctx.drawImage(s, Math.round(BAR_ROOM.dealer.x - s.ax), Math.round(BAR_ROOM.dealer.y - s.ay));
+      } else {
+        const p = d.p;
+        const spec = playerSpecOf(p, view);
+        if (p.emote) drawDancer('p' + p.id, p.x, p.y, spec, p.emote - 1, dt);
+        else drawCharacter('pi' + p.id, p.x, p.y, p.aim, spec, null, dt, { moving: p.moving });
+      }
+    }
+    // lighting: dark room, moving spotlights, warm counter, DJ strobes
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const F = BAR_ROOM.floor;
+    const pal = ['#ff3fa4', '#22e5ff', '#a66bff', '#ffd23f', '#3ddc84'];
+    const lights = [];
+    for (let i = 0; i < 4; i++) lights.push({ x: F.x + F.w / 2 + Math.sin(t * 0.9 + i * 1.7) * F.w * 0.45, y: F.y + F.h / 2 + Math.cos(t * 0.7 + i * 2.1) * F.h * 0.45, r: 120, c: pal[(i + Math.floor(t / 2)) % pal.length], i: 1, bloom: true });
+    for (let y = BAR_ROOM.counter.y + 20; y < BAR_ROOM.counter.y + BAR_ROOM.counter.h; y += 50) lights.push({ x: BAR_ROOM.counter.x + 20, y, r: 90, c: '#ffc888', i: 0.9 });
+    lights.push({ x: BAR_ROOM.dj.x + BAR_ROOM.dj.w / 2, y: BAR_ROOM.dj.y + 20, r: 140, c: beat < 0.15 ? '#ffffff' : pal[Math.floor(t * 2) % pal.length], i: beat < 0.15 ? 1.6 : 1, bloom: true });
+    if (bar.dealer) lights.push({ x: BAR_ROOM.dealer.x, y: BAR_ROOM.dealer.y, r: 70, c: '#ff2a3a', i: 0.9, bloom: true });
+    lights.push({ x: BAR_ROOM.door.x, y: BAR_ROOM.door.y - 10, r: 70, c: '#3ddc84', i: 0.8 });
+    for (const p of I.players) lights.push({ x: p.x, y: p.y - 6, r: 40, c: '#ffe6c8', i: 0.4 });
+    applyLighting(lights, [0.2, 0.14, 0.28], -offX, -offY);
+    // emissive: dancefloor tiles, LED wall, neon tubes, signs
+    ctx.translate(offX, offY);
+    for (let gy = 0; gy < F.h / 16; gy++) for (let gx = 0; gx < F.w / 16; gx++) {
+      const k = (gx + gy + Math.floor(t * 2.07)) % pal.length;
+      const lit = tileOn(gx, gy);
+      if (!lit) continue;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = pal[k];
+      ctx.fillRect(F.x + gx * 16 + 1, F.y + gy * 16 + 1, 14, 14);
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    const D = BAR_ROOM.dj;
+    for (let i = 0; i < 24; i++) { const h = 2 + Math.abs(Math.sin(t * 7 + i * 0.7) * Math.sin(t * 3.1 + i)) * 10 * (beat < 0.3 ? 1.3 : 1); ctx.fillStyle = pal[i % pal.length]; ctx.fillRect(D.x + 4 + i * 4, 14 - h, 3, h); }
+    ctx.fillStyle = Math.floor(t * 2) % 2 ? '#ff3fa4' : '#22e5ff'; ctx.fillRect(16, 14, W - 32, 1);
+    ctx.fillStyle = '#ff3fa4'; ctx.fillRect(BAR_ROOM.counter.x + BAR_ROOM.counter.w - 1, BAR_ROOM.counter.y, 1, BAR_ROOM.counter.h);
+    for (let y = 60; y < 244; y += 12) { ctx.fillStyle = ['#3ddc84', '#ffd23f', '#9af0ff', '#ff3fa4'][(y / 12) % 4]; ctx.fillRect(18, y, 1, 3); }
+    drawText(ctx, bar.name.toUpperCase(), 120, 4, Math.floor(t * 1.5) % 2 ? '#ffd23f' : '#ff3fa4');
+    drawText(ctx, 'SAIDA', BAR_ROOM.door.x, H - 12, '#3ddc84');
+    if (bar.dealer) { ctx.fillStyle = Math.floor(t * 3) % 2 ? '#ff2a3a' : '#7a1020'; ctx.fillRect(BAR_ROOM.dealer.x - 1, BAR_ROOM.dealer.y - 30, 3, 3); }
+    drawParticles(dt, 'em');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    drawBloom(lights, -offX, -offY, 1);
+    ctx.translate(offX, offY);
+    // tags and prompts
+    for (const p of I.players) drawText(ctx, p.name, p.x, p.y - 30, p.color || '#fff');
+    if (I.prompt) drawText(ctx, I.prompt.text, I.prompt.x, I.prompt.y, Math.floor(t * 3) % 2 ? '#ffd23f' : '#ffffff');
+    drawTexts(dt);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const vg = ctx.createRadialGradient(R.vw / 2, R.vh / 2, R.vh * 0.35, R.vw / 2, R.vh / 2, R.vh * 0.95);
+    vg.addColorStop(0, 'rgba(5,2,15,0)'); vg.addColorStop(1, 'rgba(5,2,15,0.5)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, R.vw, R.vh);
+    R.interiorOff = { x: offX, y: offY };
+  }
+
   return R;
 }
 
@@ -1250,7 +1675,7 @@ function renderChunk(world, cx, cy) {
     const h = hash2(tx, ty, world.seed);
     let v = (h * vars.length) | 0;
     if (t === T.ROAD) v = h < 0.8 ? 0 : (((h - 0.8) / 0.2) * vars.length) | 0;
-    if (t === T.BUILD) { P(px, py, 16, 16, '#1a1622'); continue; }
+    if (t === T.BUILD || t === T.WALL) { P(px, py, 16, 16, '#1a1622'); continue; }
     if (t === T.WALL) g.drawImage(set[T.CONCRETE][0], px, py);
     else g.drawImage(vars[Math.min(vars.length - 1, v)], px, py);
     // contact shadow at the foot of buildings

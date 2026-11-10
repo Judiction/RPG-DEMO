@@ -7,6 +7,7 @@
 //   bruxaria  — dark, distorted, hypnotic funk. Milícia turf.
 //   melody    — cleaner melodic funk with arps and pads. NeoBrás turf.
 //   f150      — fast funk 150 / mandelão, heavy toms and chops. Comando Cromo turf.
+//   club      — four-on-the-floor electronic house with offbeat bass. Played by the DJs inside bars.
 
 import { getAudio } from './audio.js';
 import { makeRng } from './rng.js';
@@ -44,6 +45,11 @@ const STYLES = {
     claps: [[4, 12], [4, 10, 12], [4, 12, 14]], toms: [[1, 3, 5, 7, 9, 11, 13, 15], [2, 3, 6, 7, 10, 11, 14, 15], [1, 5, 7, 9, 13, 15]],
     bassWave: 'square', bassDist: 0.6, lead: 'pulse12', leadOct: 2, voltVox: false, agogo: 0.6, whistle: 0.5, arp: 0, pad: 0, dark: 0.3, chops: true,
   },
+};
+STYLES.club = {
+  bpm: [122, 126], scales: ['minor', 'dorian'], swing: [0.0, 0.01],
+  kicks: [[0, 4, 8, 12]], claps: [[4, 12], [4, 12, 15]], toms: [[14], [7, 15], [11]],
+  bassWave: 'sawtooth', bassDist: 0.25, lead: 'pulse25', leadOct: 2, voltVox: false, agogo: 0, whistle: 0, arp: 1, pad: 1, dark: 0, offBass: true,
 };
 const SECTIONS = ['intro', 'groove', 'full', 'full', 'break', 'groove', 'full', 'full'];
 const LAYERS = {
@@ -110,6 +116,7 @@ export function createMusic(seed = (Math.random() * 1e9) | 0) {
     P.bass = Array.from({ length: 16 }, (_, i) => (P.kick.includes(i) ? r.pick([0, 0, 0, 7, 12, -2, 0, 5]) : r.chance(0.08) ? r.pick([0, 7, 12]) : null));
     // the hook: a 2-bar riff on the pentatonic (catchy, repeated)
     const riffLen = 32;
+    if (S.offBass) { P.bass = Array.from({ length: 16 }, (_, i) => (i % 4 === 2 ? r.pick([0, 0, 0, 12, 7]) : i % 4 === 3 && r.chance(0.2) ? 0 : null)); P.openHat = r.pick([2, 6, 10, 14]); P.hat = Array.from({ length: 16 }, (_, i) => (i % 4 === 2 ? 0.95 : i % 2 ? r.range(0.3, 0.6) : r.range(0.1, 0.3))); }
     P.riff = [];
     let deg = r.int(0, 4);
     for (let i = 0; i < riffLen; i++) {
@@ -362,7 +369,7 @@ export function createMusic(seed = (Math.random() * 1e9) | 0) {
     sweep.frequency.exponentialRampToValueAtTime(500, t + Math.max(0.15, (16 - M.step) * M.stepDur));
   };
   M.reseed = (s) => { M.seed = s; M.cycle = 0; M.bar = 0; M.step = 0; M.section = 'intro'; roll(s); };
-  M.styleName = () => ({ volt: 'Funk Volt Mix', bruxaria: 'Funk Bruxaria', melody: 'Funk Melody', f150: 'Funk 150' }[M.pending ? M.pending.style : M.style]);
+  M.styleName = () => ({ volt: 'Funk Volt Mix', bruxaria: 'Funk Bruxaria', melody: 'Funk Melody', f150: 'Funk 150', club: 'Club Eletrônico (DJ ao vivo)' }[M.pending ? M.pending.style : M.style]);
   return M;
 }
 
