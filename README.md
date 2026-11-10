@@ -49,7 +49,9 @@ Next time, the host loads the game from the title screen and friends rejoin as t
 | **T** | Dance (passinho, crip walk or rebolado — you can't move or shoot until it ends) |
 | **TAB** | Territory map: click to place your waypoint, click a district to see / upgrade it |
 | **Enter** | Chat |
-| **ESC** | Menu: invite link, volume, graphics quality, save, quit |
+| **E** (hold) | Next to a downed gang-mate: revive them |
+| **X** | While downed: give up (respawn at the QG) |
+| **ESC** | Menu: invite link, volume, graphics quality, blood on/off, save, quit |
 | **M** | Music on/off |
 
 ### The game loop (PvE)
@@ -99,8 +101,13 @@ transformers and cars are great for that.
 ### Money, levels and death
 - **Kills pay cash (R$)** to whoever got the kill. Teammates nearby get a 40% share. Crew kills pay their owner half.
 - **XP** levels you up: more max HP and damage. Some weapons need a minimum level.
-- **Dying** sends you back to the QG after 5 seconds and drops **25% of your cash** where you fell.
-- **Enemies that kill anyone level up** (players, guards, crew, turrets): they grow into the next, bigger tier and get a ★.
+- **Going down**: at 0 HP you fall and crawl slowly, leaving a blood trail. A gang-mate holds **E** next to you for
+  3 seconds to pick you up (30% HP); your crew will also kneel by you and revive you in 10 seconds (they can be shot
+  meanwhile). Enemies can finish you: every hit takes time off your **1:30** bleed-out timer. **X** gives up.
+- **Dying** sends you back to the QG and costs **25% of your cash** (gone for good) plus **40% of your progress**
+  toward the next level (you never drop a level). Revive your friends!
+- **Enemies level up after 4 kills** (players, guards, crew, turrets): they grow into the next, bigger tier and get a ★.
+- **Police give no XP.** Killing cops while you have 3 or more wanted stars costs you XP.
 
 ### The base (QG)
 Your QG is an occupied favela block: low brick walls with several alley entrances, a little town of brick houses,
@@ -115,7 +122,8 @@ and the cops wait outside. (During a raid on the QG the safe zone switches off �
   *Optical Camo* (Cloak), *Kinetic Shield* (Shield).
 - **ARMÁRIO** (lockers) chooses which weapon goes on each arm.
 - **GARAGEM** sells **battery cells** (your money) and **flying vehicles** for the gang (vault money).
-- **COFRE** (vault) spends the gang vault on upgrades for the whole gang:
+- **COFRE** (vault): anyone can **take money out** for themselves (up to 25% of the vault, once a minute — the gang
+  sees who took what), and spend the gang vault on upgrades for the whole gang:
   Guard Training, More Recruits, Business Network (income), Bounty Board (+cash per kill),
   Black Market (cheaper shops), Informants (earlier raid warnings), Rescue Squad (faster respawn).
 - **DEFESA** puts turrets and upgrades on the base itself.
@@ -128,7 +136,9 @@ press **B** (or use the compound menu) to upgrade it — up to level 4, with mor
 
 ### Crew levels
 Your crew (followers) level up with their kills, up to level 5: more health, more damage, faster attacks, and they
-look the part (armor, visors, better weapons, gold stars over their heads). They can still die for good.
+look the part (armor, visors, gold stars over their heads). Every kill also heals them 15% and adds +2% max HP for good.
+Each level brings a stronger weapon: gunners go pistol → SMG → shotgun → burst rifle → rail beam; fighters go
+claws → blade → hammer (ground slam). They can still die for good.
 
 ### Blood
 Hits spray blood that falls and stains the floor; bodies leave pools; badly hurt characters drip. Drones, mechs and

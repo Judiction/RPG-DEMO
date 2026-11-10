@@ -8,7 +8,7 @@
 
 import {
   TILE, WEAPONS, ABILITIES, randomLook, LOOK_KEYS, LOOK_OPTIONS, GANG_COLORS, NAME_COLORS, VEHICLES, VEHICLE_IDS,
-  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL, BAR_ROOM, ITEMS, WANTED, isMech,
+  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL, BAR_ROOM, ITEMS, WANTED, isMech, DOWN, WITHDRAW,
 } from './data.js';
 import { randomSeed } from './rng.js';
 import { generateWorld, moveBox, regionAt, rayCast, opaqueAt } from './world.js';
@@ -258,7 +258,7 @@ function tryJoin(id, c, gang) {
 
 function hostTick(dt) {
   const game = app.game;
-  G.setInput(game, 'host', { x: app.local.x, y: app.local.y, aim: app.local.aim, fireL: app.fireL, fireR: app.fireR, bx: app.local.bx, by: app.local.by });
+  G.setInput(game, 'host', { x: app.local.x, y: app.local.y, aim: app.local.aim, fireL: app.fireL, fireR: app.fireR, bx: app.local.bx, by: app.local.by, rev: app.revHeld });
   app.acc += dt;
   let steps = 0;
   while (app.acc >= STEP && steps < 5) { G.step(game, STEP); app.acc -= STEP; steps++; }
@@ -416,6 +416,7 @@ function applySnapshot(s) {
     o.level = r[7]; o.veh = r[8] || 0; o.seat = r[9];
     o.ghost = !!(r[6] & 64); o.cops = !!(r[6] & 128);
     o.bar = r[10] ?? -1; o.tbx = r[11]; o.tby = r[12]; o.emote = r[13] || 0; o.stars = r[14] || 0;
+    o.down = !!(r[6] & 256); o.revP = (r[15] || 0) / 100; o.downT = r[16] || 0;
     if (o.bx === undefined || o.bar !== o.lastBar) { o.bx = o.tbx; o.by = o.tby; o.lastBar = o.bar; }
   });
   syncMap(client.enemies, s.E, (r) => ({ id: r[0], x: r[2], y: r[3] }), (o, r) => {
@@ -426,7 +427,7 @@ function applySnapshot(s) {
   });
   syncMap(client.allies, s.A, (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => {
     o.tx = r[1]; o.ty = r[2]; o.hp = r[3]; o.maxHp = r[4]; o.flash = r[5] & 2 ? 0.1 : 0; o.moving = !!(r[5] & 8); o.aim = r[6];
-    o.team = r[7]; o.follow = r[8] || null; o.tier = r[9]; o.civ = r[10] || 0; o.melee = !!r[11]; o.lvl = r[12] || 1;
+    o.team = r[7]; o.follow = r[8] || null; o.tier = r[9]; o.civ = r[10] || 0; o.melee = !!r[11]; o.lvl = r[12] || 1; o.rev = !!r[13];
   });
   syncMap(client.turrets, s.T || [], (r) => ({ id: r[0] }), (o, r) => {
     o.x = r[1]; o.y = r[2]; o.aim = r[3]; o.hp = r[4]; o.maxHp = r[5]; o.type = TURRET_IDS[r[6]]; o.mk = r[7]; o.team = r[8]; o.dead = !!(r[9] & 1); o.flash = !!(r[9] & 2);
@@ -471,7 +472,7 @@ function clientTick(dt) {
   app.sendT += dt;
   if (app.sendT >= 0.033 && client.conn) {
     app.sendT = 0;
-    const inp = { t: 'i', x: +app.local.x.toFixed(1), y: +app.local.y.toFixed(1), aim: +app.local.aim.toFixed(3), fireL: app.fireL, fireR: app.fireR };
+    const inp = { t: 'i', x: +app.local.x.toFixed(1), y: +app.local.y.toFixed(1), aim: +app.local.aim.toFixed(3), fireL: app.fireL, fireR: app.fireR, rev: app.revHeld };
     if (app.local.bar >= 0) { inp.bx = +app.local.bx.toFixed(1); inp.by = +app.local.by.toFixed(1); }
     send(client.conn, inp);
   }
@@ -675,8 +676,8 @@ function handleEvent(ev) {
     case 'pdie':
       renderer.burst(ev.x, ev.y - 6, ['#ff3b5c', '#ffffff', '#aeb9c9'], 24, 90, 0.9, 120);
       renderer.pool(ev.x, ev.y, 11, false);
-      if (ev.id === app.myId) { sfx('death'); renderer.screenFlash('#ff0030', 0.5); ui.log(`You went down to <b>${escapeHtml(ev.by)}</b>${ev.loss ? ` and dropped <b class="gold">R$${ev.loss}</b>` : ''}.`, 'bad'); }
-      else { sfx('die', ev.x, ev.y); ui.log(`<b>${escapeHtml(ev.name)}</b> went down to ${escapeHtml(ev.by)}!`, 'bad'); }
+      if (ev.id === app.myId) { sfx('death'); renderer.screenFlash('#ff0030', 0.5); ui.deathLoss(ev.loss || 0, ev.xp || 0); ui.log(`You died (<b>${escapeHtml(ev.by)}</b>). Lost <b class="gold">R$${ev.loss || 0}</b> and <b>${ev.xp || 0} XP</b>.`, 'bad'); }
+      else { sfx('die', ev.x, ev.y); ui.log(`<b>${escapeHtml(ev.name)}</b> died (${escapeHtml(ev.by)}).`, 'bad'); }
       break;
     case 'pkill': ui.log(`<b>${escapeHtml(ev.k)}</b> took out <b>${escapeHtml(ev.v)}</b>!`, 'gold'); break;
     case 'eup':
@@ -771,7 +772,22 @@ function handleEvent(ev) {
       setTimeout(() => ui.showVictory({ mine: mineWin, text, stats: app.mode === 'host' ? app.game.stats : null }), 1500);
       break;
     }
-    case 'buy': sfx('buy'); ui.toast(escapeHtml(ev.text), 'gold'); break;
+    case 'buy': if (ev.id !== undefined && ev.id !== app.myId) break; sfx('buy'); ui.toast(escapeHtml(ev.text), 'gold'); break;
+    case 'down':
+      renderer.pool(ev.x, ev.y, 9, false);
+      if (ev.id === app.myId) { sfx('death'); renderer.screenFlash('#ff0030', 0.5); renderer.addShake(6); ui.alert('<b>VOCÊ CAIU!</b> Crawl to cover. A gang-mate can revive you (hold E) — or your crew will try.', 'raid', 6000); }
+      else if (G.gangIdx(ev.g) === myGangIdx()) { sfx('alarm', ev.x, ev.y, 0.6); ui.alert(`<b>${escapeHtml(ev.name)}</b> is down! Get to them and hold <b>E</b> to revive.`, 'raid', 5000); }
+      break;
+    case 'revived':
+      renderer.effect({ k: 'pillar', x: ev.x, y: ev.y, c: '#3ddc84', life: 0.9 });
+      renderer.burst(ev.x, ev.y - 10, ['#3ddc84', '#a0ffc0', '#ffffff'], 22, 60, 0.9, 0, true);
+      sfx('heal', ev.x, ev.y);
+      if (ev.id === app.myId) ui.alert(`Back on your feet${ev.by === 'crew' ? ' — your crew pulled you up' : ` — thanks, <b>${escapeHtml(ev.by)}</b>`}!`, 'good');
+      else if (near(ev.x, ev.y, 300)) ui.log(`<b>${escapeHtml(ev.name)}</b> is back up${ev.by === 'crew' ? ' (crew)' : ` (${escapeHtml(ev.by)})`}.`, 'good');
+      break;
+    case 'xploss':
+      if (ev.id === app.myId) { renderer.text(ev.x, ev.y, `-${ev.v} XP`, '#ff3b5c', 1.4, -14); if (ev.cop) ui.toast('Killing cops at 3+ stars costs you XP.', 'warn'); }
+      break;
     case 'sale':
       if (near(ev.x, ev.y, 260)) { renderer.text(ev.x, ev.y, `+R$${ev.v}`, '#7dff5a', 1.1, -16); sfx('cash', ev.x, ev.y, 0.35); }
       break;
@@ -893,7 +909,7 @@ function useAbility(k) {
   const prof = myProfile(), me = myPrivate();
   if (!prof || !me || me.dead) return;
   if (me.veh && (k === 'Q' || k === 'R')) return;
-  if (me.bar >= 0 || me.emo > 0) return;
+  if (me.bar >= 0 || me.emo > 0 || me.down) return;
   const A = ABILITIES[k];
   const lvl = prof.mods[A.mod] || 0;
   if (lvl < 1) { ui.toast(`${A.name} needs the ${A.mod === 'legs' ? 'Leg Servos' : A.mod === 'nanite' ? 'Nanite Regen' : A.mod === 'optic' ? 'Optical Camo' : 'Kinetic Shield'} mod (Clínica at the QG).`, 'warn'); sfx('error'); return; }
@@ -996,7 +1012,9 @@ function gameFrame(dt, now) {
     else if (code === 'KeyT') { if (me && !me.dead && !me.veh && !(me.emo > 0)) sendAction({ t: 'emote' }); }
     else if (code === 'KeyG') { sendAction({ t: 'recruit' }); }
     else if (code === 'KeyQ' || code === 'Space' || code === 'ShiftLeft' || code === 'ShiftRight') useAbility('Q');
+    else if (code === 'KeyX' && me && me.down) { sendAction({ t: 'giveup' }); }
     else if (code === 'KeyE') {
+      if (downedMateNear()) continue;
       const spot = contextSpot();
       if (spot && spot.door !== undefined) enterBar();
       else if (spot && spot.shop) ui.openShop(spot.shop, spot.bar);
@@ -1069,7 +1087,9 @@ function gameFrame(dt, now) {
   if (L.bar >= 0 && renderer.interiorOff) L.aim = Math.atan2(input.mouse.y - renderer.interiorOff.y - (L.by - 8), input.mouse.x - renderer.interiorOff.x - L.bx);
   else L.aim = Math.atan2(mw.y - (L.y - 8 - lift), mw.x - L.x);
   renderer.mouse.x = input.mouse.x; renderer.mouse.y = input.mouse.y;
-  const fireOk = me && !me.dead && !app.menuOpen && !app.typing && !(veh && me.seat === 0) && !(L.bar >= 0) && !dancing && !me.safe;
+  const mate = me && !me.dead && !me.down && !veh ? downedMateNear() : null;
+  app.revHeld = !!(mate && !app.typing && input.keys.has('KeyE'));
+  const fireOk = me && !me.dead && !app.menuOpen && !app.typing && !(veh && me.seat === 0) && !(L.bar >= 0) && !dancing && !me.safe && !me.down && !app.revHeld;
   app.fireL = !!(fireOk && input.mouse.L);
   app.fireR = !!(fireOk && input.mouse.R);
   setListener(L.x, L.y);
@@ -1172,6 +1192,20 @@ function moveInRoom(L, dx, dy) {
   if (!hit(L.bx, L.by + dy)) L.by += dy;
   L.by = Math.min(BAR_ROOM.h + 4, L.by);
 }
+// a downed gang-mate close enough to revive
+function downedMateNear() {
+  const L = app.local, myG = myGangIdx();
+  let best = null, bd = DOWN.reviveRange - 2;
+  const list = app.mode === 'host' ? [...app.game.players.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, down: p.down, name: p.name, g: G.gangIdx(p.gang) }))
+    : [...client.players.values()].map((o) => ({ id: o.id, x: o.x, y: o.y, down: o.down, name: (client.roster.get(o.id) || {}).name || '?', g: (client.roster.get(o.id) || {}).g }));
+  for (const p of list) {
+    if (p.id === app.myId || !p.down || p.g !== myG) continue;
+    const d = Math.hypot(p.x - L.x, p.y - L.y);
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+
 // what can I interact with here? (bar door, counter, dealer, a base building)
 function contextSpot() {
   const me = myPrivate();
@@ -1207,8 +1241,11 @@ function contextSpot() {
 }
 const SPOT_NAME = { arsenal: 'ARSENAL — buy & upgrade arms', clinic: 'CLÍNICA — body mods', locker: 'ARMÁRIO — equip arms', vault: 'COFRE — gang vault', garage: 'GARAGEM — vehicles' };
 function contextHint() {
-  const s = contextSpot();
   const me = myPrivate();
+  if (me && me.down) return `YOU ARE DOWN — crawl to cover, a gang-mate can revive you · [X] give up`;
+  const mate = me && !me.dead ? downedMateNear() : null;
+  if (mate) return me.rv > 0 ? `REVIVING ${mate.name.toUpperCase()}... ${Math.round(me.rv * 100)}%` : `[HOLD E] Revive ${mate.name}`;
+  const s = contextSpot();
   if (me && me.emo > 0) return '♪ DANÇANDO... ♪';
   if (!s) return me && me.bar >= 0 ? 'Walk out through the door (bottom) to leave' : '';
   if (s.shop === 'drinks') return `[B] BALCÃO — buy drinks (${s.bar.name})`;
@@ -1259,10 +1296,11 @@ function buildView() {
       hp: p.hp, maxHp: p.maxHp, dead: p.dead, out: p.out, cloak: p.cloakT > 0, shield: p.shieldHp > 0, inv: p.invulnT > 0, burn: p.burnT > 0,
       name: p.name, look: p.look, equip: p.equip, mods: p.mods, level: p.level, chat: chatOf(p.id), color: p.color, gang: G.gangIdx(p.gang),
       veh: p.veh || 0, seat: p.seat,
+      down: !!p.down, revP: p.revP || 0, downT: p.downT || 0,
       bar: p.inBar, bx: p.id === 'host' ? L.bx : p.bx, by: p.id === 'host' ? L.by : p.by, emote: p.emoteT > 0 ? p.emote + 1 : 0, ...(() => { const pf = G.profile(p); return { ghost: !!pf.ghost, fury: pf.fury }; })(),
     }));
     enemies = [...g.enemies.values()].map((e) => ({ ...e, burn: e.burnT > 0 }));
-    allies = [...g.allies.values()].filter((a) => !a.hidden).map((a) => ({ id: a.id, x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp, flash: a.flash, moving: a.moving, aim: a.aim, team: G.gangIdx(a.team), follow: a.follow, tier: a.tier, civ: a.civ, melee: a.melee, lvl: a.lvl || 1 }));
+    allies = [...g.allies.values()].filter((a) => !a.hidden).map((a) => ({ id: a.id, x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp, flash: a.flash, moving: a.moving, aim: a.aim, team: G.gangIdx(a.team), follow: a.follow, tier: a.tier, civ: a.civ, melee: a.melee, lvl: a.lvl || 1, rev: a.revT > 0 }));
     turrets = [...g.turrets.values()].map((t) => ({ id: t.id, x: t.x, y: t.y, aim: t.aim, hp: t.hp, maxHp: t.maxHp, type: t.type, mk: t.mk, team: G.gangIdx(t.team), dead: t.deadT > 0, flash: t.flash > 0 }));
     vehicles = [...g.vehicles.values()].map((v) => ({ id: v.id, type: v.type, x: v.x, y: v.y, hp: v.hp, maxHp: v.maxHp, charge: v.charge, dir: v.dir, flying: v.flying, flash: v.flash > 0, charging: v.charging, team: G.gangIdx(v.team), seats: v.seats }));
     pickups = [...g.pickups.values()]; projectiles = g.projectiles;
@@ -1282,6 +1320,7 @@ function buildView() {
         dead: mine ? client.me.dead : o.dead, out: o.out, cloak: o.cloak, shield: o.shield, inv: o.inv, burn: o.burn,
         name: r.name || '?', look: r.look || {}, equip: mine && client.prof ? client.prof.equip : r.equip, mods: mine && client.prof ? client.prof.mods : r.mods, level: o.level, chat: chatOf(o.id),
         color: r.color, gang: r.g ?? 0, veh: o.veh, seat: o.seat,
+        down: o.down, revP: o.revP, downT: o.downT,
         bar: mine ? client.me.bar : o.bar, bx: mine ? L.bx : o.bx, by: mine ? L.by : o.by, emote: o.emote, ghost: mine && client.prof ? !!client.prof.ghost : o.ghost, fury: mine && client.prof ? client.prof.fury : false,
       });
     }

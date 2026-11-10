@@ -366,3 +366,15 @@ input { font-family: var(--head); }
 /* ------------------------------------------------------------ round 5: boca */
 .boca-box { background: rgba(125, 255, 90, .08); border: 2px solid #3a7a2a; color: #d8ffd0; padding: 6px 10px; margin-bottom: 10px; font-size: 18px; }
 .boca-box b { color: #7dff5a; font-weight: 400; font-family: var(--head); font-size: 12px; }
+
+/* ------------------------------------------------------------ round 6: downed */
+#downed { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: auto; text-align: center; }
+#downed .death-title { font-size: 40px; animation: blink 1s infinite; }
+#downed-t { font-family: var(--head); font-size: 14px; color: #fff; text-shadow: 1px 1px 0 #000; }
+#downed-help { font-size: 18px; color: #ffd0d8; text-shadow: 1px 1px 0 #000; max-width: 460px; }
+#downed-help b { color: var(--yellow); font-weight: 400; }
+.bar.downbar, .bar.revbar { width: 260px; height: 10px; }
+.bar.downbar .fill { background: linear-gradient(#ff6a7a, #a01030); }
+.bar.revbar .fill { background: linear-gradient(#5dff9a, #2ab86a); }
+#death-sub { font-family: var(--head); font-size: 13px; color: #ffd0d8; margin-top: 8px; }
+#death-sub b { color: var(--yellow); font-weight: 400; }

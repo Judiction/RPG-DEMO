@@ -161,7 +161,15 @@ export const BASE_SPEED = 72;            // px / s
 export const xpForLevel = (lvl) => Math.round(40 * Math.pow(lvl, 1.65));
 export const MAX_LEVEL = 40;
 export const RESPAWN_TIME = 5;
-export const DEATH_CASH_LOSS = 0.25;
+export const DEATH_CASH_LOSS = 0.25;        // cash lost for good when you die
+export const DEATH_XP_LOSS = 0.4;           // share of the progress toward your next level lost when you die (never drops a level)
+// downed: a gang-mate holds E next to you (or your crew kneels by you) before you bleed out
+export const DOWN = { time: 90, reviveT: 3, crewReviveT: 10, reviveHp: 0.3, crawl: 0.18, dmgToTime: 0.6, reviveRange: 24 };
+export const ENEMY_LVL_KILLS = 4;           // kills an enemy needs to grow into the next tier
+export const COP_XP_LOSS = 0.06;            // share of a level lost per cop killed at 3+ wanted stars
+export const WITHDRAW = { share: 0.25, cd: 60 };   // take up to 25% of the gang vault, once a minute
+export const CREW_KILL = { heal: 0.15, grow: 0.02 };
+export const CREW_WEAPONS = { gun: ['pistol', 'smg', 'shotgun', 'burst', 'rail'], melee: ['claw', 'blade', 'blade', 'hammer', 'hammer'] };
 export const FOLLOWER_MAX = 4;           // followers per player in total (crew from captures + recruited civilians)
 
 // Recoil impulse (px/s) pushed into the shooter when firing. Negative = lunge forward (melee).

@@ -8,7 +8,7 @@
 //   5. bloom, flying vehicles, holograms, silhouettes of players hidden behind buildings, tags and overlays
 // The game is drawn at low resolution (~640 px wide) and scaled up with crisp pixels.
 
-import { TILE, FACTIONS, WEAPONS, GANG_COLORS, VEHICLES, BRANDS, BAR_ROOM, ITEMS, isMech } from './data.js';
+import { TILE, FACTIONS, WEAPONS, GANG_COLORS, VEHICLES, BRANDS, BAR_ROOM, ITEMS, isMech, CREW_WEAPONS, DOWN } from './data.js';
 import { T, CHUNK, STATION_COLORS } from './world.js';
 import {
   getTileset, charSprite, armSprite, propSprite, playerSpec, enemySpec, allySpec, followerSpec, civilianSpec, ENEMY_ARM,
@@ -767,6 +767,7 @@ export function createRenderer(canvas) {
     const eq = p.equip || { L: 'fist', R: 'pistol' };
     const arms = [{ slot: 'L', kind: eq.L, color: '#aeb9c9' }, { slot: 'R', kind: eq.R, color: '#aeb9c9' }];
     const isMe = view.me && p.id === view.me.id;
+    if (p.down) { drawDowned(p, key, spec, dt); return; }
     if (p.emote) { const s0 = drawDancer(key, p.x, p.y, spec, p.emote - 1, dt); p._top = s0.top; return; }
     let alpha;
     if (p.cloak) alpha = isMe ? 0.35 : 0.1 + Math.abs(Math.sin(R.time * 9)) * 0.08;
@@ -813,13 +814,15 @@ export function createRenderer(canvas) {
     if (al.follow && lv > 1) {
       const base = spec;
       spec = specFor('L' + lv + JSON.stringify(base), () => Object.assign({}, base, { band: gc }, lv >= 3 ? { armor: Math.max(base.armor || 0, 1), visor: gc } : {}, lv >= 4 ? { armor: Math.max(base.armor || 0, 2), chromeLegs: true } : {}, lv >= 5 ? { armor: 3, kneeGlow: true, chains: true } : {}));
-      if (lv >= 3) weapon = al.melee ? 'blade' : 'smg';
+      const wk = (al.melee ? CREW_WEAPONS.melee : CREW_WEAPONS.gun)[lv - 1];
+      weapon = wk === 'burst' ? 'smg' : wk;
       if (lv >= 5 && Math.random() < 0.08) R.particles.push({ x: al.x + (Math.random() - 0.5) * 8, y: al.y - Math.random() * 16, vx: 0, vy: -14, life: 0.5, t: 0, c: gc, g: 0, sz: 1, em: true });
     }
     else { spec = specFor('A' + (al.id % 4) + gc, () => allySpec(gc, al.id % 4)); weapon = 'pistol'; }
     const s = drawCharacter('a' + al.id, al.x, al.y, al.aim, spec, [{ slot: 'R', kind: weapon, color: al.civ ? '#8a8494' : shade(spec.top, -0.1) }], dt, { flash: al.flash > 0, moving: al.moving });
     al._top = s.top;
     if (al.hp < al.maxHp * 0.35) drip(al.x, al.y, dt, false);
+    if (al.rev && Math.random() < 0.25) R.particles.push({ x: al.x + (Math.random() - 0.5) * 8, y: al.y - 10, vx: 0, vy: -18, life: 0.5, t: 0, c: '#3ddc84', g: 0, sz: 1, em: true });
   }
 
   function drawCiv(c, view, dt) {
@@ -1152,6 +1155,12 @@ export function createRenderer(canvas) {
       if (d.pl) {
         const p = d.pl;
         if (p.cloak && (!me || p.id !== me.id)) continue;
+        if (p.down) {
+          drawText(ctx, p.name, p.x, p.y - 26, p.color || '#ffffff');
+          drawText(ctx, me && p.id !== me.id && p.gang === view.myGang ? '[E] REVIVE' : 'DOWN', p.x, p.y - 34, Math.floor(R.time * 3) % 2 ? '#ff3b5c' : '#ffffff');
+          hpBar(p.x, p.y - 19, 18, p._bleed ?? 1, '#ff3b5c');
+          continue;
+        }
         playerTag(p, view, p.x, p.y - (p._top || 26));
       } else if (d.en) {
         const e = d.en;
@@ -1588,6 +1597,39 @@ export function createRenderer(canvas) {
     }
     ctx.globalAlpha = 1;
     R.stains = keep;
+  }
+
+  // ---------------------------------------------------------------- downed players: crawling and bleeding
+  function drawDowned(p, key, spec, dt) {
+    const a = stepAnim(key, p.x, p.y, dt);
+    const s = charSprite(spec, 0, a.moving ? 1 + (Math.floor(a.dist / 3) % 4) : 0);
+    const left = Math.cos(p.aim || 0) < 0;
+    shadow(p.x, p.y, 9, 0.5);
+    ctx.save();
+    ctx.translate(Math.round(p.x), Math.round(p.y - 3 + (a.moving ? Math.sin(R.time * 14) * 0.6 : 0)));
+    ctx.rotate(left ? -Math.PI / 2 : Math.PI / 2);
+    ctx.globalAlpha = p.inv ? 0.6 : 1;
+    ctx.drawImage(s, -s.ax, -Math.round(s.ay / 2));
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    p._top = 12;
+    // a blood trail where they crawl, and a slow drip while still
+    if (R.bloodOn) {
+      if (a.moving && Math.random() < dt * 14) addStain(p.x + (Math.random() - 0.5) * 6, p.y + (Math.random() - 0.5) * 3, 2, ['#7a0610', '#9a0c18', '#5a040c'][(Math.random() * 3) | 0], false, Math.random() < 0.3 ? 2 : 0);
+      else if (Math.random() < dt * 3) addStain(p.x + (Math.random() - 0.5) * 8, p.y + (Math.random() - 0.5) * 3, 1, '#7a0610', false);
+    }
+    // revive progress ring + bleed-out timer
+    const T = Math.max(0, p.downT || 0) / DOWN.time;
+    ctx.globalAlpha = 0.6 + Math.sin(R.time * 6) * 0.3;
+    pixCircle(p.x, p.y, 12, '#ff3b5c', 0.55);
+    ctx.globalAlpha = 1;
+    if (p.revP > 0) {
+      const n = 40, m = Math.floor(n * Math.min(1, p.revP));
+      ctx.fillStyle = '#3ddc84';
+      for (let i = 0; i <= m; i++) { const an = -Math.PI / 2 + (i / n) * Math.PI * 2; ctx.fillRect(Math.round(p.x + Math.cos(an) * 14), Math.round(p.y + Math.sin(an) * 14 * 0.55), 2, 2); }
+      if (Math.random() < 0.3) R.particles.push({ x: p.x + (Math.random() - 0.5) * 12, y: p.y - 4, vx: 0, vy: -20, life: 0.6, t: 0, c: '#3ddc84', g: 0, sz: 1, em: true });
+    }
+    p._bleed = T;
   }
 
   // ---------------------------------------------------------------- gang members hanging out in their turf

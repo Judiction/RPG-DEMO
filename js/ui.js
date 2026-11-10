@@ -6,7 +6,7 @@ import {
   GANG_COLORS, GANG_COLOR_NAMES, GANG_DEFAULT_NAMES, NAME_COLORS, BIOME_LABEL, MAX_WEAPON_LVL, weaponMult, weaponUpgradePrice,
   TILE, randomLook, MAP_TYPES, MAP_TYPE_IDS, MAP_SIZES, VEHICLES, VEHICLE_IDS, BATTERY_PRICE, TURRETS, TURRET_IDS,
   TURRET_MAX_MK, turretMult, turretUpgradePrice, COMPOUND_UPS, COMPOUND_UP_IDS, PVP_WIN_SHARE, FOLLOWER_MAX,
-  DRINKS, STIMS, ITEMS, BELT_SIZE, WANTED, BAD_BATCH, BOCA,
+  DRINKS, STIMS, ITEMS, BELT_SIZE, WANTED, BAD_BATCH, BOCA, WITHDRAW, DOWN,
 } from './data.js';
 import { T, generateWorld, mapImageData } from './world.js';
 import { charSprite, armSprite, playerSpec, mk, turretHead, vehicleSprite } from './sprites.js';
@@ -96,6 +96,7 @@ export function createUI(root, cb) {
       <input id="chat" class="hidden" maxlength="80" placeholder="Say something... (Enter)" autocomplete="off">
     </div>
     <div class="hud-br" id="room"></div>
+    <div id="downed" class="hidden"><div class="death-title">CAÍDO!</div><div id="downed-t"></div><div class="bar downbar"><div class="fill" id="downed-bar"></div></div><div class="bar revbar"><div class="fill" id="downed-rev"></div></div><div id="downed-help">Crawl to cover. A gang-mate can hold <b>E</b> next to you to revive you · your crew will try too.</div><button class="btn small" id="btn-giveup">[X] GIVE UP</button></div>
     <div id="death" class="hidden"><div class="death-title" id="death-title">VOCÊ CAIU</div><div id="death-sub"></div><div id="death-t"></div><button class="btn big hidden" id="btn-switch">JOIN ANOTHER GANG</button></div>
   </div>
 
@@ -557,12 +558,21 @@ export function createUI(root, cb) {
     $('#hint').classList.toggle('show', !!hint);
     updateTurf(s);
     drawMinimap(s);
+    // downed
+    const dn = $('#downed');
+    if (me.down > 0 && !me.dead) {
+      dn.classList.remove('hidden');
+      $('#downed-t').textContent = `Bleeding out in ${Math.floor(me.down / 60)}:${String(Math.floor(me.down % 60)).padStart(2, '0')}`;
+      $('#downed-bar').style.width = (100 * me.down / DOWN.time).toFixed(1) + '%';
+      $('#downed-rev').style.width = (100 * (me.rvd || 0)).toFixed(1) + '%';
+      $('#downed-rev').parentElement.style.visibility = me.rvd > 0 ? 'visible' : 'hidden';
+    } else dn.classList.add('hidden');
     // death
     const dd = $('#death');
     if (me.dead) {
       dd.classList.remove('hidden');
       if (me.out) { $('#death-title').textContent = 'GANG ELIMINADA'; $('#death-t').textContent = 'Your gang lost all its turf.'; $('#btn-switch').classList.remove('hidden'); }
-      else { $('#death-title').textContent = 'VOCÊ CAIU'; $('#death-t').textContent = `Respawning in ${Math.ceil(me.rt)}...`; $('#btn-switch').classList.add('hidden'); }
+      else { $('#death-title').textContent = 'VOCÊ MORREU'; $('#death-t').textContent = `Respawning in ${Math.ceil(me.rt)}...`; $('#death-sub').innerHTML = U.lastLoss ? `Lost <b>R$${U.lastLoss.cash}</b> and <b>${U.lastLoss.xp} XP</b>` : ''; $('#btn-switch').classList.add('hidden'); }
     } else dd.classList.add('hidden');
     // room badge
     const savedRecently = U.savedAt && performance.now() - U.savedAt < 2500;
@@ -798,6 +808,8 @@ export function createUI(root, cb) {
   }
 
   // ---------------------------------------------------------------- modals
+  U.deathLoss = (cash, xp) => { U.lastLoss = { cash, xp }; };
+  $('#btn-giveup').addEventListener('click', () => cb.onAction({ t: 'giveup' }));
   U.closeModal = () => { $('#modal').classList.add('hidden'); U.open = null; cb.setMenuOpen(false); };
   function openModal(kind, html) {
     U.open = kind;
@@ -870,7 +882,7 @@ export function createUI(root, cb) {
     const prof = s.prof, cash = s.me.cash;
     const pm = 1 - 0.08 * ((s.up && s.up.market) || 0);
     const baseR = s.regionId;
-    const key = JSON.stringify([baseTab, prof, cash, s.vault, s.up, s.inBase, s.me.bat, baseTab === 'defense' ? s.rs[baseR] : 0, (s.vehicles || []).length, Math.ceil((s.me.heat || 0) / 100)]);
+    const key = JSON.stringify([baseTab, prof, cash, s.vault, s.up, s.inBase, s.me.bat, baseTab === 'defense' ? s.rs[baseR] : 0, (s.vehicles || []).length, Math.ceil((s.me.heat || 0) / 100), s.me.wd > 0]);
     const inner = $('#modal-inner');
     if (!force && inner._key === key) return;
     inner._key = key;
@@ -927,6 +939,8 @@ export function createUI(root, cb) {
     } else if (baseTab === 'vault') {
       body = `<p class="tab-intro">The gang vault fills with compound income (every 10s per district you hold). Anyone can spend it on upgrades for the whole gang, on vehicles, or on <b>compound defenses</b> (B at a compound, or from the TAB map).</p>
         <div class="vault-amount">${money(s.vault)}</div>
+        <div class="row2 donate">${(() => { const mx = Math.floor(s.vault * WITHDRAW.share), cd = s.me.wd || 0; return `<button class="btn on" data-a="withdraw" data-v="${Math.floor(s.vault * 0.1)}" ${!s.inBase || cd > 0 || s.vault < 10 ? 'disabled' : ''}>TAKE R$${Math.floor(s.vault * 0.1)}</button><button class="btn on" data-a="withdraw" data-v="${mx}" ${!s.inBase || cd > 0 || mx < 1 ? 'disabled' : ''}>${cd > 0 ? `LOCKED ${cd}s` : `TAKE R$${mx} (MAX)`}</button>`; })()}</div>
+        <p class="tab-intro small">Anyone can take up to ${Math.round(WITHDRAW.share * 100)}% of the vault, once a minute. The gang sees who took what.</p>
         <div class="row2 donate"><button class="btn" data-a="donate" data-v="100" ${cash < 100 ? 'disabled' : ''}>DONATE R$100</button><button class="btn" data-a="donate" data-v="500" ${cash < 500 ? 'disabled' : ''}>DONATE R$500</button><button class="btn" data-a="donate" data-v="${Math.floor(cash / 2)}" ${cash < 2 ? 'disabled' : ''}>DONATE HALF</button></div><div class="cards">`;
       for (const id in VAULT_UPGRADES) {
         const V = VAULT_UPGRADES[id];
@@ -1067,6 +1081,7 @@ export function createUI(root, cb) {
           <p><b>WASD</b> move · <b>Mouse</b> aim · <b>LMB/RMB</b> left/right arm weapon</p>
           <p><b>Q / Space / Shift</b> dash · <b>E</b> nano-heal · <b>R</b> cloak · <b>F</b> shield</p>
           <p><b>V</b> get in / out of a flying vehicle · <b>G</b> recruit a local · <b>B</b> base or compound menu (stand at a QG building to open its shop)</p>
+          <p>At 0 HP you go <b>down</b>: crawl and wait for a gang-mate to hold <b>E</b> next to you (1:30 before you die, <b>X</b> to give up). Dying costs 25% of your cash and part of your XP.</p>
           <p><b>E</b> at a bar door to go in · <b>B</b> at the counter or the dealer · <b>1 2 3</b> use belt items · <b>T</b> dance</p>
           <p>Crimes that people see raise your <b>wanted stars</b>. Lose the cops, beat their response, or pay them off at the QG. Inside the QG walls nobody can shoot.</p>
           <p><b>TAB</b> map + waypoints · <b>Enter</b> chat · <b>M</b> mute music</p>
