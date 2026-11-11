@@ -502,8 +502,38 @@ export function generateWorld(seed, opts = {}) {
     let dx = Math.max(1, Math.min(4, (C.w >> 1) - 2)), dy = Math.max(1, Math.min(3, (C.h >> 1) - 2));
     if (!R.base && C.w >= 13) { dx = 3; dy = 2; }
     void dx; void dy;
-    // turrets stand on the four corners of the wall, so they cover inside and outside the compound
-    C.slots = [[C.x, C.y], [C.x + C.w - 1, C.y], [C.x, C.y + C.h - 1], [C.x + C.w - 1, C.y + C.h - 1]].map(([x, y]) => ({ x: (x + 0.5) * TILE, y: (y + 0.5) * TILE, wall: true }));
+    // turrets stand on the wall right next to the gates: they guard the way in and reach the yard inside.
+    // slot order: top gate, bottom gate (the first two you get), then the left and right gates
+    {
+      const isW = (x, y) => tiles[I(x, y)] === T.WALL;
+      // the wall tile beside an opening on one side; prefer = which end of the opening (-1 = left/top, 1 = right/bottom)
+      const flank = (horiz, fixed, a0, a1, prefer) => {
+        const opens = [];
+        let st = -1;
+        for (let a = a0 + 1; a <= a1; a++) {
+          const x = horiz ? a : fixed, y = horiz ? fixed : a;
+          const open = a < a1 && !isW(x, y);
+          if (open && st < 0) st = a;
+          if (!open && st >= 0) { opens.push([st, a - 1]); st = -1; }
+        }
+        if (!opens.length) return null;
+        const mid = (a0 + a1) / 2;
+        opens.sort((p, q) => Math.abs((p[0] + p[1]) / 2 - mid) - Math.abs((q[0] + q[1]) / 2 - mid));
+        const [o0, o1] = opens[0];
+        let a = prefer < 0 ? o0 - 1 : o1 + 1;
+        if (a <= a0 || a >= a1 || !isW(horiz ? a : fixed, horiz ? fixed : a)) a = prefer < 0 ? o1 + 1 : o0 - 1;
+        if (a <= a0 || a >= a1) return null;
+        return horiz ? [a, fixed] : [fixed, a];
+      };
+      const corners = [[C.x, C.y], [C.x + C.w - 1, C.y + C.h - 1], [C.x, C.y + C.h - 1], [C.x + C.w - 1, C.y]];
+      const spots = [
+        flank(true, C.y, C.x, C.x + C.w - 1, -1),
+        flank(true, C.y + C.h - 1, C.x, C.x + C.w - 1, 1),
+        flank(false, C.x, C.y, C.y + C.h - 1, 1),
+        flank(false, C.x + C.w - 1, C.y, C.y + C.h - 1, -1),
+      ];
+      C.slots = spots.map((sp, k) => { const [x, y] = sp || corners[k]; return { x: (x + 0.5) * TILE, y: (y + 0.5) * TILE, wall: true }; });
+    }
     // wall segments (for the 3D compound walls)
     C.walls = [];
     const run = (horiz, fixed, a0, a1) => {

@@ -563,6 +563,7 @@ export function createUI(root, cb) {
     if (!U.open) {
       if (s.ctxHint) hint = s.ctxHint;
       else if (s.nearVehicle) hint = `[V] ${s.nearVehicle}`;
+      else if (s.petPrompt) hint = s.petPrompt === 'dog' ? '[G] Pet the dog' : '[G] Pet the cat';
       else if (s.civPrompt) hint = '[G] Talk to this local: recruit them into your crew';
       else if (s.inBase) hint = '[B] BASE MENU — or walk up to a building: Arsenal · Clínica · Armário · Cofre · Garagem';
       else if (s.nearCompound >= 0) hint = '[B] COMPOUND UPGRADES — turrets, walls, guards...';
@@ -678,6 +679,8 @@ export function createUI(root, cb) {
       if (s.mode === 'pvp' && r.g !== s.myGang) continue;
       html += `<div class="turf-row raid">⚠ RAID ${esc(U.world.regions[r.target].name)} ${r.state === 0 ? `in ${r.t}s` : 'NOW'}</div>`;
     }
+    const myId = 'g' + s.myGang;
+    s.rs.forEach((rs, i) => { if (rs.atk && rs.owner === myId) html += `<div class="turf-row raid">⚠ UNDER ATTACK: ${esc(U.world.regions[i].name)}</div>`; });
     const el = $('#turf');
     if (el._html !== html) { el.innerHTML = html; el._html = html; }
   }
@@ -735,6 +738,13 @@ export function createUI(root, cb) {
       if (R.hq) { g.strokeStyle = '#ffd23f'; g.strokeRect(x - 4.5, y - 4.5, 9, 9); }
     }
     const blink = Math.floor(performance.now() / 250) % 2;
+    if (blink) for (const R of U.world.regions) {
+      const rs = s.rs[R.id];
+      if (!rs || !rs.atk || rs.owner !== 'g' + s.myGang) continue;
+      const C = R.compound;
+      const x = (C.coreX - sx) * MM_ZOOM, y = (C.coreY - sy) * MM_ZOOM;
+      g.fillStyle = '#ff3b5c'; g.fillRect(x - 5, y - 5, 10, 10); g.fillStyle = '#ffffff'; g.fillRect(x - 1, y - 1, 2, 2);
+    }
     for (const r of s.raids) {
       if (s.mode === 'pvp' && r.g !== s.myGang) continue;
       const C = U.world.regions[r.target].compound;
@@ -819,6 +829,18 @@ export function createUI(root, cb) {
       g.beginPath(); g.arc((C.coreX + 0.5) * k, (C.coreY + 0.5) * k, 16 + (performance.now() / 100) % 8, 0, Math.PI * 2); g.stroke();
       g.lineWidth = 1;
     }
+    for (const R of U.world.regions) {
+      const rs = s.rs[R.id];
+      if (!rs || !rs.atk || rs.owner !== 'g' + s.myGang) continue;
+      const C = R.compound;
+      const x = (C.coreX + 0.5) * k, y = (C.coreY + 0.5) * k;
+      g.strokeStyle = Math.floor(performance.now() / 250) % 2 ? '#ff3b5c' : '#ffffff'; g.lineWidth = 3;
+      g.beginPath(); g.arc(x, y, 12 + (performance.now() / 70) % 12, 0, Math.PI * 2); g.stroke();
+      g.lineWidth = 1;
+      const tw = g.measureText('UNDER ATTACK').width;
+      g.fillStyle = 'rgba(8,4,20,0.85)'; g.fillRect(x - tw / 2 - 3, y - 33, tw + 6, 13);
+      g.fillStyle = '#ff3b5c'; g.fillText('UNDER ATTACK', x, y - 23);
+    }
     for (const v of s.vehicles || []) { g.fillStyle = '#000'; g.fillRect(v.x / TILE * k - 3, v.y / TILE * k - 2, 7, 5); g.fillStyle = '#9af0ff'; g.fillRect(v.x / TILE * k - 2, v.y / TILE * k - 1, 5, 3); }
     for (const w of s.waypoints || []) {
       const x = w.x / TILE * k, y = w.y / TILE * k;
@@ -860,7 +882,7 @@ export function createUI(root, cb) {
         <div id="map-sel"></div>
         <button class="btn small" data-wpclear>CLEAR MY WAYPOINT</button>
         <div class="legend">${U.state && U.state.mode === 'pvp' ? (U.state.gangs || []).map((g) => `<div class="legend-row"><i style="background:${GANG_COLORS[g.idx]}"></i> ${esc(g.name)}</div>`).join('') : `<div class="legend-row"><i style="background:${U.state ? U.state.gangColor : '#f0f'}"></i> ${esc(U.state ? U.state.gangName : '')}</div>`}
-        ${FACTIONS.map((f) => `<div class="legend-row"><i style="background:${f.color}"></i> ${esc(f.name)}</div>`).join('')}
+        ${FACTIONS.filter((f) => !f.alien).map((f) => `<div class="legend-row"><i style="background:${f.color}"></i> ${esc(f.name)}</div>`).join('')}
         <div class="legend-row"><i style="background:#9af0ff"></i> Flying vehicle</div></div>
       </div></div>`);
     drawBigMap();
@@ -944,6 +966,7 @@ export function createUI(root, cb) {
       for (const id of WEAPON_IDS) {
         const Wp = WEAPONS[id];
         const lvl = prof.armory[id];
+        if (Wp.rare && !lvl) continue;
         const stats = Wp.kind === 'flame' ? `${Math.round(Wp.dmg * weaponMult(lvl || 1) / Wp.cd)} dmg/s + burn` : `${Math.round(Wp.dmg * weaponMult(lvl || 1))}${Wp.pellets ? '×' + Wp.pellets : ''} dmg · ${(1 / Wp.cd).toFixed(1)}/s`;
         let btn;
         if (!lvl) {
@@ -1140,17 +1163,42 @@ export function createUI(root, cb) {
           <p><b>Z</b> throw a grenade at the cursor · <b>C</b> switch grenade type · <b>TAB</b> map → click a district next to your turf to <b>send a raid</b></p>
           <p><b>WASD</b> move · <b>Mouse</b> aim · <b>LMB/RMB</b> left/right arm weapon</p>
           <p><b>Q / Space / Shift</b> dash · <b>E</b> nano-heal · <b>R</b> cloak · <b>F</b> shield</p>
-          <p><b>V</b> get in / out of a flying vehicle · <b>G</b> recruit a local · <b>B</b> base or compound menu (stand at a QG building to open its shop)</p>
+          <p><b>V</b> get in / out of a flying vehicle · <b>G</b> recruit a local (or pet a cat / dog) · <b>B</b> base or compound menu (stand at a QG building to open its shop)</p>
           <p>At 0 HP you go <b>down</b>: crawl and wait for a gang-mate to hold <b>E</b> next to you (1:30 before you die, <b>X</b> to give up). Dying costs 25% of your cash and part of your XP.</p>
           <p><b>E</b> at a bar door to go in · <b>B</b> at the counter or the dealer · <b>1 2 3</b> use belt items · <b>T</b> dance</p>
           <p>Crimes that people see raise your <b>wanted stars</b>. Lose the cops, beat their response, or pay them off at the QG. Inside the QG walls nobody can shoot.</p>
           <p><b>TAB</b> map + waypoints · <b>Enter</b> chat · <b>M</b> mute music</p>
         </div>
+        <button class="btn" data-set="stats">GAME STATS</button>
         <button class="btn" data-set="quality">GRAPHICS: ${s && s.quality === 'low' ? 'LOW (faster)' : 'HIGH'}</button>
         <button class="btn" data-set="blood">BLOOD: ${s && s.blood === false ? 'OFF' : 'ON'}</button>
         ${s && s.isHost ? '<button class="btn" data-set="save">SAVE NOW</button>' : ''}
         <button class="btn danger" data-set="leave">${s && s.isHost ? 'SAVE & QUIT TO TITLE' : 'LEAVE GAME'}</button>
       </div>`);
+  };
+
+  // ESC → GAME STATS: your numbers for the whole game (saved with your character)
+  U.showStats = (st) => {
+    if (!st) {
+      openModal('stats', '<div class="panel-title">GAME STATS <span class="close" data-close>✕</span></div><div class="stats-body"><p class="small">Loading...</p></div>');
+      return;
+    }
+    if (U.open !== 'stats') return;
+    const n = (v) => Math.round(v || 0).toLocaleString('en-US');
+    const time = (v) => { v = Math.round(v || 0); const h = Math.floor(v / 3600), m = Math.floor(v / 60) % 60; return h ? `${h}h ${m}m` : `${m}m ${v % 60}s`; };
+    const acc = st.shots > 0 ? Math.round(100 * Math.min(1, st.hits / st.shots)) + '%' : '—';
+    const kd = st.deaths > 0 ? (st.kills / st.deaths).toFixed(2) : st.kills > 0 ? '∞' : '—';
+    const groups = [
+      ['COMBAT', [['Kills', n(st.kills)], ['Bosses', n(st.bosses)], ['Rival players', n(st.rivals)], ['Cops', n(st.cops)], ['ETs', n(st.aliens)], ['Kills / deaths', kd], ['Damage dealt', n(st.dmgOut)], ['Damage taken', n(st.dmgIn)], ['Gun accuracy', acc], ['Grenades thrown', n(st.gren)]]],
+      ['SURVIVAL', [['Times down', n(st.downs)], ['Deaths', n(st.deaths)], ['Gang-mates revived', n(st.revives)], ['Highest wanted', st.maxStars ? '★'.repeat(st.maxStars) : '—']]],
+      ['TURF', [['Districts taken', n(st.captures)], ['Raids beaten', n(st.raidsWon)], ['Squads sent', n(st.squads)], ['Locals recruited', n(st.recruits)], ['Crew lost', n(st.crewLost)], ['Crew now', n(st.crew)]]],
+      ['STREETS', [['Time played', time(st.time)], ['Distance walked', n(st.dist) + ' m'], ['Money earned', 'R$' + n(st.earned)], ['Money spent', 'R$' + n(st.spent)], ['Cash now', 'R$' + n(st.cash)], ['Cars stolen', n(st.steals)], ['Drinks & stims bought', n(st.drinks)], ['Pets petted', n(st.pets)], ['Level', n(st.level)]]],
+    ];
+    const html = groups.map(([t, rows]) => `<div class="stats-group"><div class="stats-h">${t}</div>${rows.map(([k, v]) => `<div class="stats-row"><span>${k}</span><b>${v}</b></div>`).join('')}</div>`).join('');
+    openModal('stats', `<div class="panel-title">GAME STATS <span class="close" data-close>✕</span></div>
+      <div class="stats-body"><div class="stats-grid">${html}</div>
+      <p class="small">Your numbers for this whole game. They are kept in the save with your character.</p>
+      <button class="btn" data-set="menu">BACK</button></div>`);
   };
 
   U.showVictory = (o) => {

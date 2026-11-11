@@ -400,3 +400,14 @@ input { font-family: var(--head); }
 .bar.thp { height: 8px; margin: 4px 0; }
 .gcards { margin-bottom: 14px; }
 .gdot { display: inline-block; width: 8px; height: 10px; margin-right: 5px; border-radius: 4px 4px 2px 2px; vertical-align: -1px; }
+
+/* v0.62: game stats (ESC menu) */
+.modal-inner.stats { width: min(860px, 94vw); }
+.stats-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.stats-body .small { color: var(--dim); font-size: 16px; margin: 0; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.stats-group { background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); padding: 8px 10px; }
+.stats-h { color: var(--pink); font-family: var(--head); font-size: 12px; letter-spacing: 1px; margin-bottom: 4px; }
+.stats-row { display: flex; justify-content: space-between; gap: 10px; font-size: 17px; line-height: 1.35; }
+.stats-row span { color: var(--dim); }
+.stats-row b { color: #fff; font-weight: normal; }

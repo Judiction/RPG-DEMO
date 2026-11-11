@@ -9,7 +9,7 @@ Runs in the browser. No install, no server: one player hosts and friends join wi
 
 ---
 
-**Version 0.6** — the version is shown on the title screen. Everyone in a room must run the same version
+**Version 0.62** — the version is shown on the title screen. Everyone in a room must run the same version
 (the host refuses friends on another version; refresh with Ctrl+F5). Fixes before a GitHub sync are 0.61, 0.62...
 
 ## How to play
@@ -45,13 +45,14 @@ Next time, the host loads the game from the title screen and friends rejoin as t
 | **R** | Cloak: enemies lose you, next hit does 2× *(needs Optical Camo)* |
 | **F** | Kinetic Shield *(needs Kinetic Shield)* |
 | **V** | Get in / out of a flying vehicle |
-| **G** | Talk to a civilian: recruit them into your crew |
+| **G** | Talk to a civilian: recruit them into your crew · next to a cat or dog: pet it |
 | **B** | Base menu (at your QG — stand at a building's door to open that shop), compound upgrades (near the core of a district you own), or the bar counter / dealer |
 | **E** | At a bar door: go inside |
 | **1 / 2 / 3** | Use the drink or stim in that belt slot |
 | **Z** | Throw a grenade at the cursor |
 | **C** | Switch grenade type |
-| **T** | Dance (passinho, crip walk or rebolado — you can't move or shoot until it ends) |
+| **T** | Dance (passinho, crip walk or rebolado — you can't move or shoot until it ends). Your crew dances with you |
+| **Esc** | Menu: volume, graphics, blood, **game stats** (your numbers for the whole game, kept in the save) |
 | **TAB** | Territory map: click to place your waypoint, click a district to see / upgrade it |
 | **Enter** | Chat |
 | **E** (hold) | Next to a downed gang-mate: revive them |
@@ -80,7 +81,24 @@ takes the core if it wins — while you fight somewhere else. One raid per playe
 ### Soldiers
 Recruit locals (**G**) in your own turf when your crew is full and they join the local compound as soldiers
 (+3 per compound, +2 per Barracks level, +6 at the main base). At a compound you can take a soldier along as crew
-(compound menu). Guards patrol their compound.
+(compound menu).
+
+### Guards
+Guards have two moods. **Calm**: they walk a round outside the walls, stop at each spot and look out at the street —
+anything hostile that comes close gets shot. **Defense**: as soon as an enemy (bot, rival player, squad, ET...) gets
+inside the walls, every guard runs in to defend the yard. A few seconds after the last intruder is gone, they go back
+to their round.
+
+### How NPCs pick a fight
+Every NPC — enemy gangs, police, guards, soldiers, your crew, the ETs — hits back at **whoever hurt it lately** (the
+one dealing the most damage first), and otherwise fights the **closest enemy it can see**. They stick with a target
+unless someone else is clearly closer or hurting them more, so they don't flicker between targets.
+
+### Base under attack
+When one of your districts is attacked — a bot raid, a squad sent by another player, rival players, ETs, or anything
+shooting your guards and turrets — you get a red **BASE UNDER ATTACK** alert with a siren, a red pointer next to your
+character that points at the base (with the distance), and the district blinks on the minimap and the TAB map. The
+alert repeats while the fight goes on.
 
 ### The game loop (PvE)
 1. **Leave the QG** and go to a district that **borders your turf** (check the minimap or the TAB map).
@@ -122,6 +140,9 @@ transformers and cars are great for that.
 - The bot factions still hold the rest of the city and raid every gang (a bit weaker than in PvE).
   Faction bosses guard their HQs from the start; taking an HQ pays the gang a big bonus.
 - To capture a rival's district, clear its defenders and hold the core (bases take longer).
+- **Your main base is shielded** while your gang holds any other district: rivals can fight its guards and wreck its
+  turrets, but nobody can capture its core until every outpost is gone. So you always keep your shops and upgrades
+  until the very end.
 - **Lose your main base** and you respawn at your other compounds. **Lose all your turf** and your gang is out —
   you can then **join another gang**.
 - **Win** by being the last gang standing, or by holding **60% of the city**.
@@ -161,7 +182,9 @@ and the cops wait outside. (During a raid on the QG the safe zone switches off �
   Guard Training, More Recruits, Business Network (income), Bounty Board (+cash per kill),
   Black Market (cheaper shops), Informants (earlier raid warnings), Rescue Squad (faster respawn).
 - **DEFESA** puts turrets and upgrades on the base itself.
-- Every upgrade shows: turrets stand on the **corners of the walls** (they shoot inside and outside), Armored Walls go
+- Every upgrade shows: turrets stand **on the walls right next to the gates** — the first two guard the top and bottom
+  gates, the next two the side gates. Up there they see farther (+35% range), so they cover the way in and the yard
+  inside. Armored Walls go
   from brick to concrete, steel and chrome, the Radar is a tall tower, the Medic Post a tent, Barracks put up bunk
   tents (and more soldiers), Fortify adds concrete barriers, the Charge Pad glows.
 - Turrets take a lot of damage but can be **destroyed for good** (buy a new one). Damaged turrets can be repaired
@@ -257,6 +280,18 @@ Vehicles are parked around the city (they show on the minimap and map). Press **
 | Rocket Arm | explosive rockets |
 | Rail Arm | instant piercing beam |
 | Chain Lightning | a bolt that jumps from enemy to enemy (up to 5), stuns drones |
+| Varginha Ray | **rare** — alien tech, a fast green piercing ray. Never sold: only the last ET of an invasion drops it |
+
+### Alien invasion (random event)
+Once or twice a game, at a random moment, a **flying saucer** comes for one player: you get a few seconds of warning,
+then it beams a big squad of **ETs de Varginha** down right around them, hovers for a while and flies away. The saucer
+can't be hurt. The ETs are tough and fight **everyone** — gangs, factions, police, civilians — and bleed green.
+They're worth a lot of XP and cash, and the last one drops the **Varginha Ray** for whoever kills it (or on the
+ground, if a turret or a crew member got it).
+
+### Cats and dogs
+Vira-latas and street cats wander around the city, sit, sniff around. Press **G** next to one: it barks or meows.
+They can't be hurt — gunshots and explosions just scare them away for a bit.
 
 ### The city
 - **Explosive props**: red barrels, gas cylinders (*botijões*), transformers and parked cars blow up when shot,

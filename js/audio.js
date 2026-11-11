@@ -61,7 +61,7 @@ function tone(t, dur, { wave = 'square', f = 440, f2, v = 0.3, out, attack = 0.0
   o.start(t); o.stop(t + dur + 0.05);
 }
 
-const LIMIT = { pistol: 0.04, smg: 0.05, hit: 0.03, ebullet: 0.05, die: 0.04, cash: 0.06, spark: 0.05, punch: 0.04, flame: 0.09, tmg: 0.06, zap: 0.08 };
+const LIMIT = { pistol: 0.04, smg: 0.05, hit: 0.03, ebullet: 0.05, die: 0.04, cash: 0.06, spark: 0.05, punch: 0.04, flame: 0.09, tmg: 0.06, zap: 0.08, plasma: 0.05, beamdown: 0.12, ufo: 1.0, bark: 0.25, meow: 0.3 };
 
 // Flying vehicle engine hum (a looping synth that follows speed). level 0 = off, 1 = full throttle.
 let engine = null;
@@ -162,6 +162,12 @@ export function sfx(name, x, y, volume = 1) {
     case 'door': noise(t, 0.12, { f: 400, v: 0.35, out }); tone(t, 0.1, { wave: 'sine', f: 120, f2: 70, v: 0.3, out }); noise(t + 0.15, 0.25, { type: 'bandpass', f: 1800, q: 3, v: 0.12, out }); break;
     case 'cheat': [262, 392, 523, 784, 1046].forEach((f, i) => tone(t + i * 0.05, 0.3, { wave: 'triangle', f, v: 0.15, out })); noise(t, 0.4, { type: 'highpass', f: 5000, v: 0.15, out }); break;
     case 'dance': tone(t, 0.08, { wave: 'square', f: 523, v: 0.08, out }); tone(t + 0.12, 0.08, { wave: 'square', f: 659, v: 0.08, out }); tone(t + 0.24, 0.12, { wave: 'square', f: 784, v: 0.08, out }); break;
+    // v0.62: pets and aliens
+    case 'bark': for (let i = 0; i < 2; i++) { tone(t + i * 0.2, 0.09, { wave: 'sawtooth', f: 560, f2: 260, v: 0.16, out }); noise(t + i * 0.2, 0.08, { type: 'bandpass', f: 900, q: 2, v: 0.35, out }); } break;
+    case 'meow': tone(t, 0.2, { wave: 'triangle', f: 520, f2: 900, v: 0.18, out, attack: 0.03 }); tone(t + 0.18, 0.3, { wave: 'triangle', f: 900, f2: 470, v: 0.16, out }); tone(t, 0.48, { wave: 'sine', f: 1040, f2: 940, v: 0.04, out }); break;
+    case 'ufo': for (let i = 0; i < 3; i++) { tone(t + i * 0.45, 0.45, { wave: 'sine', f: 300 + i * 40, f2: 900 - i * 60, v: 0.12, out, attack: 0.05 }); tone(t + i * 0.45, 0.45, { wave: 'sine', f: 308 + i * 40, f2: 912 - i * 60, v: 0.08, out, attack: 0.05 }); } tone(t, 1.4, { wave: 'square', f: 58, f2: 52, v: 0.05, out }); break;
+    case 'beamdown': tone(t, 0.45, { wave: 'sine', f: 180, f2: 1600, v: 0.14, out }); noise(t + 0.1, 0.3, { type: 'highpass', f: 5000, v: 0.15, out }); break;
+    case 'plasma': tone(t, 0.14, { wave: 'sine', f: 980, f2: 260, v: 0.14, out }); tone(t, 0.1, { wave: 'square', f: 420, f2: 140, v: 0.05, out }); break;
     default: tone(t, 0.05, { f: 600, v: 0.1, out });
   }
 }

@@ -78,7 +78,7 @@ const app = {
 };
 const host = { peer: null, clients: new Map() };
 const client = {
-  peer: null, conn: null, players: new Map(), enemies: new Map(), allies: new Map(), pickups: new Map(), turrets: new Map(), vehicles: new Map(), civs: new Map(), pcars: new Map(), helis: new Map(), projectiles: [],
+  peer: null, conn: null, players: new Map(), enemies: new Map(), allies: new Map(), pickups: new Map(), turrets: new Map(), vehicles: new Map(), civs: new Map(), pcars: new Map(), helis: new Map(), pets: new Map(), ufo: null, projectiles: [],
   me: null, prof: null, rg: null, roster: new Map(), day: 0.3, cd: { L: 0, R: 0 }, radar: [], broken: new Set(), mode: 'pve', seed: 0,
 };
 
@@ -102,6 +102,8 @@ const ui = createUI(document.getElementById('menus'), {
     if (k === 'leave') leaveGame();
     if (k === 'save') { saveNow(); ui.toast('Game saved.', 'good'); }
     if (k === 'blood') { prefs.blood = renderer.bloodOn = !renderer.bloodOn; if (!renderer.bloodOn) renderer.stains.length = 0; store.set(PREFS_KEY, prefs); ui.toast(`Blood: ${renderer.bloodOn ? 'ON' : 'OFF'}`, 'good'); ui.togglePause(); ui.togglePause(); }
+    if (k === 'stats') { sendAction({ t: 'stats' }); ui.showStats(null); }
+    if (k === 'menu') { ui.closeModal(); ui.togglePause(); }
     if (k === 'quality') { prefs.quality = renderer.quality = renderer.quality === 'low' ? 'high' : 'low'; store.set(PREFS_KEY, prefs); ui.toast(`Graphics: ${renderer.quality.toUpperCase()}`, 'good'); }
   },
 });
@@ -340,7 +342,8 @@ function cleanupClient() {
   try { client.conn && client.conn.close(); } catch { /* ignore */ }
   try { client.peer && client.peer.destroy(); } catch { /* ignore */ }
   client.peer = null; client.conn = null;
-  for (const m of [client.players, client.enemies, client.allies, client.pickups, client.turrets, client.vehicles, client.civs, client.pcars, client.helis]) m.clear();
+  for (const m of [client.players, client.enemies, client.allies, client.pickups, client.turrets, client.vehicles, client.civs, client.pcars, client.helis, client.pets]) m.clear();
+  client.ufo = null;
   client.projectiles = [];
   client.me = null; client.prof = null; client.rg = null;
 }
@@ -383,7 +386,7 @@ function unpackRegions(rg) {
     mode: rg.mode,
     rs: rg.rs.map((a) => {
       const r = {
-        owner: G.ownerFromCode(a[0]), garrison: a[1], garrisonMax: a[2], capture: a[3] / 100, guards: a[4], hqUnlocked: !!(a[5] & 1), bossDefeated: !!(a[5] & 2),
+        owner: G.ownerFromCode(a[0]), garrison: a[1], garrisonMax: a[2], capture: a[3] / 100, guards: a[4], hqUnlocked: !!(a[5] & 1), bossDefeated: !!(a[5] & 2), atk: !!(a[5] & 4), shield: !!(a[5] & 8),
         capBy: a[6] === 99 ? 'raid' : a[6] >= 0 ? G.ownerFromCode(a[6]) : null,
       };
       if (a[7]) { r.up = { level: a[7][0], walls: a[7][1], barracks: a[7][2], medic: a[7][3], pad: a[7][4], radar: a[7][5], boca: a[7][6] || 0 }; r.slots = a[8].map((x) => (x ? { type: TURRET_IDS[x[0]], mk: x[1], hpf: (x[2] ?? 100) / 100 } : null)); r.extra = a[9] || 0; }
@@ -431,7 +434,7 @@ function applySnapshot(s) {
   });
   syncMap(client.allies, s.A, (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => {
     o.tx = r[1]; o.ty = r[2]; o.hp = r[3]; o.maxHp = r[4]; o.flash = r[5] & 2 ? 0.1 : 0; o.moving = !!(r[5] & 8); o.aim = r[6];
-    o.team = r[7]; o.follow = r[8] || null; o.tier = r[9]; o.civ = r[10] || 0; o.melee = !!r[11]; o.lvl = r[12] || 1; o.rev = !!r[13];
+    o.team = r[7]; o.follow = r[8] || null; o.tier = r[9]; o.civ = r[10] || 0; o.melee = !!r[11]; o.lvl = r[12] || 1; o.rev = !!r[13]; o.emote = r[14] || 0;
   });
   syncMap(client.turrets, s.T || [], (r) => ({ id: r[0] }), (o, r) => {
     o.x = r[1]; o.y = r[2]; o.aim = r[3]; o.hp = r[4]; o.maxHp = r[5]; o.type = TURRET_IDS[r[6]]; o.mk = r[7]; o.team = r[8]; o.dead = !!(r[9] & 1); o.flash = !!(r[9] & 2);
@@ -443,7 +446,9 @@ function applySnapshot(s) {
   syncMap(client.civs, s.C || [], (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => {
     o.tx = r[1]; o.ty = r[2]; o.seed = r[3]; o.flee = !!(r[4] & 1); o.flash = !!(r[4] & 2); o.moving = !!(r[4] & 4); o.aim = r[5]; o.hpPct = r[6];
   });
-  syncMap(client.pickups, s.K, (r) => ({ id: r[0] }), (o, r) => { o.type = r[1] ? 'heal' : 'cash'; o.x = r[2]; o.y = r[3]; });
+  syncMap(client.pickups, s.K, (r) => ({ id: r[0] }), (o, r) => { o.type = ['cash', 'heal', 'ufo'][r[1]] || 'heal'; o.x = r[2]; o.y = r[3]; });
+  syncMap(client.pets, s.PT || [], (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => { o.tx = r[1]; o.ty = r[2]; o.kind = r[3] ? 'cat' : 'dog'; o.seed = r[4]; o.moving = !!(r[5] & 1); o.flee = !!(r[5] & 2); o.happy = !!(r[5] & 4); o.sit = !!(r[5] & 8); o.aim = r[6]; });
+  if (s.U) { const u = client.ufo && client.ufo.id === s.U[4] ? client.ufo : { id: s.U[4], x: s.U[0], y: s.U[1] }; u.tx = s.U[0]; u.ty = s.U[1]; u.state = ['warn', 'beam', 'hover', 'leave'][s.U[2]]; u.t = s.U[3]; client.ufo = u; } else client.ufo = null;
   syncMap(client.pcars, s.PC || [], (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => { o.tx = r[1]; o.ty = r[2]; o.dir = r[3]; o.state = r[4]; });
   syncMap(client.helis, s.HE || [], (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => { o.tx = r[1]; o.ty = r[2]; o.aim = r[3]; o.kind = r[4] ? 'rocket' : 'mg'; o.atk = !!r[5]; });
   if (client.me.veh && client.me.veh !== prevVeh) { const v = client.vehicles.get(client.me.veh); if (v) { app.local.x = v.tx; app.local.y = v.ty; app.local.vx = app.local.vy = 0; } }
@@ -454,11 +459,12 @@ function clientTick(dt) {
   // interpolate others
   const k = Math.min(1, dt * 14);
   for (const o of client.players.values()) if (o.tbx !== undefined && o.bx !== undefined) { o.bx += (o.tbx - o.bx) * k; o.by += (o.tby - o.by) * k; }
-  for (const m of [client.players, client.enemies, client.allies, client.vehicles, client.civs, client.pcars, client.helis]) for (const o of m.values()) {
+  for (const m of [client.players, client.enemies, client.allies, client.vehicles, client.civs, client.pcars, client.helis, client.pets]) for (const o of m.values()) {
     if (o.tx === undefined) continue;
     if (Math.abs(o.tx - o.x) > 160 || Math.abs(o.ty - o.y) > 160) { o.x = o.tx; o.y = o.ty; }
     o.x += (o.tx - o.x) * k; o.y += (o.ty - o.y) * k;
   }
+  if (client.ufo) { const u = client.ufo; u.x += (u.tx - u.x) * k; u.y += (u.ty - u.y) * k; u.t = Math.max(0, u.t - dt); }
   // cosmetic projectiles
   const keep = [];
   for (const p of client.projectiles) {
@@ -556,7 +562,7 @@ function predictFire(slot, wid) {
 function muzzle(x, y, a, big = false) { renderer.effect({ k: 'muzzle', x, y, a, life: big ? 0.07 : 0.05, big }); }
 
 // ------------------------------------------------------------------ events → effects, sounds, UI
-const SHOT_SFX = { pulse: 'pistol', pellet: 'shotgun', smart: 'smg', rocket: 'rocket', ebullet: 'ebullet', eball: 'ebullet', erocket: 'rocket', tbullet: 'tmg' };
+const SHOT_SFX = { pulse: 'pistol', pellet: 'shotgun', smart: 'smg', rocket: 'rocket', ebullet: 'ebullet', eball: 'ebullet', erocket: 'rocket', tbullet: 'tmg', eplasma: 'plasma' };
 
 function myGangId() { return 'g' + myGangIdx(); }
 function myGangIdx() {
@@ -600,7 +606,7 @@ function handleEvent(ev) {
       const col = { hit: '#ffffff', crit: '#ffd23f', player: '#ff3b5c', heal: '#3ddc84', ally: '#ff9ab8', burn: '#ff8a3d', veh: '#c8c0ff', civ: '#c8c0d8', poison: '#a6ff3f' }[ev.c] || '#fff';
       renderer.text(ev.x + (Math.random() - 0.5) * 6, ev.y, (ev.c === 'heal' ? '+' : '') + ev.v + (ev.c === 'crit' ? '!' : ''), col);
       if (ev.c === 'hit' || ev.c === 'crit') { renderer.burst(ev.x, ev.y + 8, ['#ffffff', '#ffd23f', '#9af0ff'], 4, 50, 0.25); sfx('hit', ev.x, ev.y, 0.6); }
-      if (ev.fy !== undefined && near(ev.x, ev.fy, 420)) renderer.bleed(ev.x, ev.fy - 10, ev.v * (ev.c === 'crit' ? 1.5 : 1), ev.d, !!ev.m, ev.fy);
+      if (ev.fy !== undefined && near(ev.x, ev.fy, 420)) renderer.bleed(ev.x, ev.fy - 10, ev.v * (ev.c === 'crit' ? 1.5 : 1), ev.d, ev.m === 2 ? 'alien' : !!ev.m, ev.fy);
       break;
     }
     case 'hurt':
@@ -674,12 +680,12 @@ function handleEvent(ev) {
       break;
     case 'tele': renderer.effect({ k: 'tele', x: ev.x, y: ev.y, r: ev.r, d: ev.d }); sfx('tele', ev.x, ev.y, 0.6); break;
     case 'die': {
-      const cols = ev.f >= 0 ? ['#ffffff', '#ffd23f', '#9aa6b8', '#56606e', ['#c9c05a', '#3ad0ff', '#a66bff'][ev.f]] : ev.f === -2 ? ['#c83a3a', '#8a2a2a', '#ffffff'] : ['#ffffff', '#ff9ab8'];
+      const cols = ev.f >= 0 ? ['#ffffff', '#ffd23f', '#9aa6b8', '#56606e', ['#c9c05a', '#3ad0ff', '#a66bff', '#5a8aff', '#7dff4a'][ev.f]] : ev.f === -2 ? ['#c83a3a', '#8a2a2a', '#ffffff'] : ['#ffffff', '#ff9ab8'];
       renderer.burst(ev.x, ev.y - 6, cols, 10 + Math.round(ev.b * 8), 70 * ev.b, 0.7, 120);
       renderer.effect({ k: 'ring', x: ev.x, y: ev.y - 6, r: 10 * ev.b, c: '#ffffff', life: 0.2 });
       sfx(ev.b > 1.4 ? 'bigdie' : 'die', ev.x, ev.y);
       if (ev.boss) { renderer.addShake(8); renderer.effect({ k: 'boom', x: ev.x, y: ev.y, r: 60, life: 0.8 }); }
-      renderer.pool(ev.x, ev.y, 8 + (ev.b || 1) * 4, ev.f >= 0 && isMech(ev.f, ev.tr, ev.boss));
+      renderer.pool(ev.x, ev.y, 8 + (ev.b || 1) * 4, ev.f === 4 ? 'alien' : ev.f >= 0 && isMech(ev.f, ev.tr, ev.boss));
       break;
     }
     case 'pdie':
@@ -864,6 +870,45 @@ function handleEvent(ev) {
     }
     case 'buffend': if (ev.id === app.myId) ui.toast(`${escapeHtml(ev.k)} wore off.`, 'warn'); break;
     case 'emote': sfx('dance', ev.x, ev.y); renderer.burst(ev.x, ev.y - 20, ['#ff3fa4', '#22e5ff', '#ffd23f'], 10, 40, 0.8, 0, true); break;
+    // ---- v0.62
+    case 'battack': {
+      if (ev.g !== myGangId()) break;
+      const R = app.world.regions[ev.r];
+      const who = ev.k === 'player' ? `<b>${escapeHtml(ev.w)}</b>` : ev.k === 'squad' || ev.k === 'gang' ? `a squad of ${gangLabel('g' + ev.w)}` : ev.k === 'alien' ? '<b style="color:#7dff4a">the ETs</b>' : ev.k === 'police' ? 'the police' : ev.w !== null && ev.w !== undefined ? factionName(ev.w) : 'enemies';
+      sfx('alarm');
+      renderer.screenFlash('#ff0030', 0.15);
+      ui.alert(`⚠ <b>${ev.base ? 'YOUR BASE' : 'BASE'} UNDER ATTACK</b> — ${who} at <b>${escapeHtml(R.name)}</b>! Follow the red arrow.`, 'raid', 7000);
+      ui.log(`<b>${escapeHtml(R.name)}</b> is under attack by ${who}. Go defend it!`, 'bad');
+      break;
+    }
+    case 'ufo':
+      if (ev.s === 'warn') {
+        sfx('ufo');
+        if (ev.id === app.myId) { renderer.screenFlash('#7dff4a', 0.35); ui.alert('<b style="color:#7dff4a">OVNI!</b> A flying saucer is coming <b>for you</b>! ETs are about to land around you — get ready.', 'raid', 8000); }
+        else ui.alert(`<b style="color:#7dff4a">OVNI!</b> A flying saucer is coming for <b>${escapeHtml(ev.name)}</b>${ev.vg === myGangIdx() ? ' — help them!' : '.'}`, 'raid', 7000);
+        ui.log(`A flying saucer was seen over the city, heading for <b>${escapeHtml(ev.name)}</b>.`, 'bad');
+      } else if (ev.s === 'beam') { sfx('ufo', ev.x, ev.y); if (near(ev.x, ev.y, 300)) renderer.addShake(4); }
+      else if (ev.s === 'leave') { sfx('ufo', ev.x, ev.y, 0.6); ui.log('The flying saucer is leaving... the ETs stay behind.', 'info'); }
+      break;
+    case 'beamdown':
+      renderer.effect({ k: 'pillar', x: ev.x, y: ev.y, c: '#7dff4a', life: 0.8 });
+      renderer.burst(ev.x, ev.y - 8, ['#7dff4a', '#ffffff', '#b8ffd0'], 10, 50, 0.6, 0, true);
+      renderer.light(ev.x, ev.y, 90, '#7dff4a', 0.5, 1.4);
+      sfx('beamdown', ev.x, ev.y);
+      break;
+    case 'ufolast':
+      sfx('levelup', ev.x, ev.y);
+      renderer.effect({ k: 'pillar', x: ev.x, y: ev.y, c: '#7dff4a', life: 1.2 });
+      ui.alert(ev.by ? `The last ET is down! <b>${escapeHtml(ev.by)}</b> takes the <b style="color:#7dff4a">Varginha Ray</b>.` : 'The last ET is down! It dropped a <b style="color:#7dff4a">strange green arm</b> — grab it!', 'good', 7000);
+      break;
+    case 'pet': {
+      const dog = ev.kind === 'dog';
+      sfx(dog ? 'bark' : 'meow', ev.x, ev.y);
+      renderer.text(ev.x, ev.y - 16, dog ? (Math.random() < 0.5 ? 'AU AU!' : 'AU!') : (Math.random() < 0.5 ? 'MIAU!' : 'MIAAU~'), dog ? '#ffd23f' : '#ff9ab8', 1.1, -14);
+      renderer.burst(ev.x, ev.y - 12, ['#ff3fa4', '#ff9ab8'], 4, 24, 0.7, -20, true);
+      break;
+    }
+    case 'stats': if (ev.to === app.myId || app.mode === 'host') ui.showStats(ev.st); break;
     case 'barin':
       sfx('door', ev.x, ev.y);
       if (ev.id === app.myId) {
@@ -890,7 +935,7 @@ function handleEvent(ev) {
 }
 
 function corePos(r) { const C = app.world.regions[r].compound; return { x: (C.coreX + 0.5) * TILE, y: (C.coreY + 0.5) * TILE }; }
-function factionName(f) { return ['<span style="color:#c9c05a">Milícia</span>', '<span style="color:#3ad0ff">NeoBrás</span>', '<span style="color:#a66bff">Comando Cromo</span>'][f] || 'Enemies'; }
+function factionName(f) { return ['<span style="color:#c9c05a">Milícia</span>', '<span style="color:#3ad0ff">NeoBrás</span>', '<span style="color:#a66bff">Comando Cromo</span>', '<span style="color:#5a8aff">the police</span>', '<span style="color:#7dff4a">the ETs</span>'][f] || 'Enemies'; }
 function gangsList() { return app.mode === 'host' ? [...app.game.gangs.values()].map((g) => ({ idx: g.idx, name: g.name })) : client.rg ? client.rg.gangs : []; }
 function gangName(id) { const i = G.gangIdx(id); const g = gangsList().find((x) => x.idx === i); return g ? g.name : GANG_DEFAULT_NAMES[i] || 'A gang'; }
 function gangLabel(id) { return `<b style="color:${GANG_COLORS[G.gangIdx(id)]}">${escapeHtml(gangName(id))}</b>`; }
@@ -1193,7 +1238,7 @@ function gameFrame(dt, now) {
     gangName: myGangObj.name, gangColor: GANG_COLORS[myG], regionId: rid,
     blood: renderer.bloodOn, grenSel: app.grenSel,
     king: isHost ? (st.king ? { r: world.kingId, goal: st.kingGoal, hold: Object.entries(st.kingHold).map(([k, v]) => [k, Math.floor(v)]) } : null) : client.rg.king,
-    inBase: inBaseLocal(), nearCompound: nearOwnCompound(), nearVehicle, civPrompt: L.bar >= 0 ? 0 : view.civPrompt, quality: renderer.quality, ctxHint: contextHint(),
+    inBase: inBaseLocal(), nearCompound: nearOwnCompound(), nearVehicle, civPrompt: L.bar >= 0 ? 0 : view.civPrompt, petPrompt: L.bar >= 0 ? '' : view.petPrompt ? view.petKind : '', quality: renderer.quality, ctxHint: contextHint(),
     barName: L.bar >= 0 ? world.bars[L.bar].name : '',
     roomCode: app.roomCode, isHost, playerCount: view.players.length, players, enemiesNear, radar: isHost ? st.radar[myGangId()] || [] : client.radar,
     vehicles: view.vehicles.map((v) => ({ x: v.x, y: v.y, charge: v.charge, type: v.type })),
@@ -1350,7 +1395,7 @@ function buildView() {
   const isHost = app.mode === 'host';
   const L = app.local;
   const chatOf = (id) => { const c = app.chats.get(id); return c && c.t > renderer.time ? c : null; };
-  let players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, rs, raids, dayT, broken, mode, waypointsSrc, pcars, helis;
+  let players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, rs, raids, dayT, broken, mode, waypointsSrc, pcars, helis, pets, ufo;
   const myG = myGangIdx();
   if (isHost) {
     const g = app.game;
@@ -1364,7 +1409,9 @@ function buildView() {
       bar: p.inBar, bx: p.id === 'host' ? L.bx : p.bx, by: p.id === 'host' ? L.by : p.by, emote: p.emoteT > 0 ? p.emote + 1 : 0, ...(() => { const pf = G.profile(p); return { ghost: !!pf.ghost, fury: pf.fury }; })(),
     }));
     enemies = [...g.enemies.values()].map((e) => ({ ...e, burn: e.burnT > 0 }));
-    allies = [...g.allies.values()].filter((a) => !a.hidden).map((a) => ({ id: a.id, x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp, flash: a.flash, moving: a.moving, aim: a.aim, team: G.gangIdx(a.team), follow: a.follow, tier: a.tier, civ: a.civ, melee: a.melee, lvl: a.lvl || 1, rev: a.revT > 0 }));
+    allies = [...g.allies.values()].filter((a) => !a.hidden).map((a) => ({ id: a.id, x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp, flash: a.flash, moving: a.moving, aim: a.aim, team: G.gangIdx(a.team), follow: a.follow, tier: a.tier, civ: a.civ, melee: a.melee, lvl: a.lvl || 1, rev: a.revT > 0, emote: a.emoteT > 0 ? a.emote + 1 : 0 }));
+    pets = [...g.pets.values()].map((a) => ({ id: a.id, x: a.x, y: a.y, kind: a.kind, seed: a.seed, moving: a.moving, flee: a.flee > 0, happy: a.happyT > 0, sit: a.sit, aim: a.aim }));
+    ufo = g.ufo ? { id: g.ufo.id, x: g.ufo.x, y: g.ufo.y, state: g.ufo.state, t: g.ufo.t } : null;
     turrets = [...g.turrets.values()].map((t) => ({ id: t.id, x: t.x, y: t.y, aim: t.aim, hp: t.hp, maxHp: t.maxHp, type: t.type, mk: t.mk, team: G.gangIdx(t.team), dead: t.deadT > 0, flash: t.flash > 0 }));
     vehicles = [...g.vehicles.values()].map((v) => ({ id: v.id, type: v.type, x: v.x, y: v.y, hp: v.hp, maxHp: v.maxHp, charge: v.charge, dir: v.dir, flying: v.flying, flash: v.flash > 0, charging: v.charging, team: G.gangIdx(v.team), seats: v.seats, civ: v.civ ? 1 : 0 }));
     pickups = [...g.pickups.values()]; projectiles = g.projectiles;
@@ -1394,6 +1441,7 @@ function buildView() {
     rs = client.rg.rs; raids = client.rg.raids; dayT = client.day; broken = client.rg.broken;
     waypointsSrc = [...client.roster.values()].map((r) => ({ name: r.name, color: r.color, wp: r.wp, g: r.g, me: r.id === app.myId }));
     pcars = [...client.pcars.values()]; helis = [...client.helis.values()];
+    pets = [...client.pets.values()]; ufo = client.ufo;
   }
   // my own vehicle follows my local prediction when I drive
   const me0 = myPrivate();
@@ -1405,7 +1453,12 @@ function buildView() {
   const meP = players.find((p) => p.id === app.myId);
   if (meP && meP.veh) { const v = vehicles.find((x) => x.id === meP.veh); if (v) meP.alt = v.flying ? 11 : 1; }
   let civPrompt = 0;
-  if (meP && !meP.dead && !meP.veh) { let bd = 24 * 24; for (const c of civs) { const d = (c.x - L.x) ** 2 + (c.y - L.y) ** 2; if (d < bd && !c.flee) { bd = d; civPrompt = c.id; } } }
+  let petPrompt = 0, petKind = '';
+  if (meP && !meP.dead && !meP.veh) {
+    let bd = 24 * 24; for (const c of civs) { const d = (c.x - L.x) ** 2 + (c.y - L.y) ** 2; if (d < bd && !c.flee) { bd = d; civPrompt = c.id; } }
+    let pd = 22 * 22; for (const a of pets) { const d = (a.x - L.x) ** 2 + (a.y - L.y) ** 2; if (d < pd && d <= bd && !a.flee) { pd = d; petPrompt = a.id; petKind = a.kind; } }
+    if (petPrompt) civPrompt = 0;
+  }
   if (meP && L.bar >= 0) meP.bar = L.bar;
   let interior = null;
   if (meP && L.bar >= 0) {
@@ -1417,7 +1470,7 @@ function buildView() {
     interior = { bar, me: { x: L.bx, y: L.by }, players: inside, prompt };
   }
   const prof = myProfile();
-  return { world: app.world, me: meP, meMoving: L.moving, players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, civPrompt, rs, raids, gangColor: GANG_COLORS[myG], myGang: myG, mode, dayT, broken, waypoints, pcars, helis, interior, sway: !!(prof && prof.sway) };
+  return { world: app.world, me: meP, meMoving: L.moving, players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, civPrompt, petPrompt, petKind, pets, ufo, rs, raids, gangColor: GANG_COLORS[myG], myGang: myG, mode, dayT, broken, waypoints, pcars, helis, interior, sway: !!(prof && prof.sway) };
 }
 
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }

@@ -317,6 +317,140 @@ function paintMech(kind, frame) {
   return c;
 }
 
+// ------------------------------------------------------------------ ETs (alien invasion)
+// Thin grey/green bodies, big heads with huge black almond eyes, glowing suits. Tier 4 = brute, 5 = commander.
+function paintAlien(tier, dir, frame) {
+  const b = [0, 0.9, 1, 1.12, 1.55, 1.3][tier] || 1;
+  const skin = ['', '#a8b4bc', '#8ac08a', '#b0a0c8', '#5e8f5a', '#c8d0d8'][tier] || '#a8b4bc';
+  const suit = ['', '#2a3a4a', '#1f3a2a', '#3a2a4a', '#2a3a1e', '#1a1a24'][tier] || '#2a3a4a';
+  const glow = tier === 5 ? '#ffd23f' : '#7dff4a';
+  const hw = Math.round(9 * Math.pow(b, 0.55)) | 1, hh = Math.round(8 * Math.pow(b, 0.5));
+  const tw = Math.round(5 * b) + (tier === 4 ? 3 : 0), th = Math.round(7 * b);
+  const lh = Math.round(6 * b), lw = Math.max(1, Math.round(1.4 * b));
+  const W = (Math.max(hw + 4, tw + 10) + 1) & ~1, H = 4 + hh + th + lh + 3;
+  const c = mk(W, H), g = c.getContext('2d');
+  const P = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(Math.round(x), Math.round(y), w, h); };
+  const cx = W / 2, feetY = H - 2;
+  const side = dir === 1 || dir === 2, fw = dir === 1 ? -1 : 1;
+  const bob = frame === 2 || frame === 4 ? -1 : 0;
+  const legTop = feetY - lh + 1, torsoTop = legTop - th + bob, headTop = torsoTop - hh + 1;
+  const skinD = shade(skin, -0.25);
+  // cape (commander) behind
+  if (tier === 5 && dir !== 0) P(cx - tw / 2 - 1, torsoTop + 1, tw + 2, th + lh - 2, '#5a1a6a');
+  // legs: long and thin
+  if (!side) {
+    P(cx - lw - 1, legTop, lw, lh - (frame === 1 ? 1 : 0), skinD); P(cx + 1, legTop, lw, lh - (frame === 3 ? 1 : 0), skinD);
+    P(cx - lw - 1, feetY, lw + 1, 1, suit); P(cx + 1, feetY, lw + 1, 1, suit);
+  } else {
+    const sw = frame === 1 ? 2 : frame === 3 ? -2 : 0;
+    P(cx - 1 + sw * fw * 0.5, legTop, lw, lh, skinD); P(cx - 1 - sw * fw * 0.5, legTop, lw, lh - (sw ? 1 : 0), skin);
+  }
+  // torso: a tight suit with a glowing line
+  const tx0 = Math.round(cx - tw / 2);
+  P(tx0, torsoTop, tw, th, suit);
+  P(tx0 + tw - 1, torsoTop + 1, 1, th - 1, shade(suit, -0.3));
+  P(tx0, torsoTop + th - 2, tw, 1, glow);
+  if (!side) P(cx - 0.5, torsoTop + 1, 1, th - 3, shade(glow, -0.35));
+  if (tier >= 3) { P(tx0 - 1, torsoTop, tw + 2, 2, tier === 4 ? '#3a4a2a' : '#5a4a7a'); P(tx0 - 1, torsoTop, tw + 2, 1, shade(tier === 4 ? '#3a4a2a' : '#5a4a7a', 0.3)); }
+  if (tier === 4) { P(tx0 - 3, torsoTop - 1, 3, 4, '#3a4a2a'); P(tx0 + tw, torsoTop - 1, 3, 4, '#3a4a2a'); P(tx0 - 3, torsoTop - 2, 1, 1, glow); P(tx0 + tw + 2, torsoTop - 2, 1, 1, glow); }
+  // the free arm, long and thin
+  if (!side) P(dir === 0 ? tx0 - 1 : tx0 + tw, torsoTop + 1, 1, th + 2, skin);
+  // big head: wide skull, narrow chin
+  const hx = Math.round(cx - hw / 2);
+  P(hx, headTop, hw, hh - 2, skin);
+  P(hx + 1, headTop + hh - 2, hw - 2, 1, skin);
+  P(hx + 2, headTop + hh - 1, hw - 4, 1, skin);
+  g.clearRect(hx, headTop, 1, 1); g.clearRect(hx + hw - 1, headTop, 1, 1);
+  P(hx + hw - 1, headTop + 1, 1, hh - 3, skinD);
+  const ey = headTop + Math.round(hh * 0.4);
+  if (dir === 0) {
+    // huge black almond eyes
+    P(hx + 1, ey, 3, 2, '#08060c'); P(hx + 2, ey + 2, 2, 1, '#08060c');
+    P(hx + hw - 4, ey, 3, 2, '#08060c'); P(hx + hw - 4, ey + 2, 2, 1, '#08060c');
+    P(hx + 1, ey, 1, 1, shade(glow, 0.2)); P(hx + hw - 2, ey, 1, 1, shade(glow, 0.2));
+  } else if (side) {
+    const ex = dir === 1 ? hx + 1 : hx + hw - 4;
+    P(ex, ey, 3, 2, '#08060c'); P(ex + (dir === 1 ? 0 : 1), ey + 2, 2, 1, '#08060c');
+    P(dir === 1 ? ex : ex + 2, ey, 1, 1, shade(glow, 0.2));
+  }
+  if (tier === 5) { for (let i = 0; i < hw; i += 2) P(hx + i, headTop - 2 - (i % 4 ? 0 : 1), 1, 2 + (i % 4 ? 0 : 1), '#ffd23f'); }
+  if (tier === 3) P(cx - 1, headTop - 2, 2, 2, glow);
+  outline(c);
+  c.ax = cx; c.ay = feetY;
+  c.shY = feetY - (torsoTop + 2);
+  c.shX = side ? 1 : Math.round(tw / 2);
+  c.top = feetY - headTop + 4;
+  return c;
+}
+
+// ------------------------------------------------------------------ cats and dogs (side view, facing right)
+// pose: 0 standing/walking, 1 sitting, 2 happy (wagging / jumping). frame 0 idle, 1..4 walk.
+const DOG_COLS = [['#c8823a', '#e8b878'], ['#2a2228', '#4a4048'], ['#e8e4d8', '#c8c0b0'], ['#6b4a2a', '#8a6a4a'], ['#8a8a96', '#b0b0bc']];
+const CAT_COLS = [['#e08a3a', '#f0b878'], ['#1e1a22', '#3a3440'], ['#ecead8', '#d0ccc0'], ['#7a7a88', '#9a9aa8'], ['#8a6a4a', '#b08a6a']];
+const petCache = new Map();
+export function petSprite(kind, seed, frame, pose, left, t = 0) {
+  const wag = pose === 2 ? Math.floor(t * 14) % 2 : Math.floor(t * 3) % 2;
+  const key = kind + (seed % 5) + ':' + (seed % 3) + ':' + frame + ':' + pose + ':' + (left ? 1 : 0) + ':' + wag;
+  let c = petCache.get(key);
+  if (c) return c;
+  c = kind === 'dog' ? paintDogPet(seed, frame, pose, wag) : paintCat(seed, frame, pose, wag);
+  if (left) { const ax = c.ax, ay = c.ay, top = c.top; c = flipX(c); c.ax = c.width - ax; c.ay = ay; c.top = top; }
+  if (petCache.size > 400) petCache.delete(petCache.keys().next().value);
+  petCache.set(key, c);
+  return c;
+}
+function paintDogPet(seed, frame, pose, wag) {
+  const [col, col2] = DOG_COLS[seed % 5];
+  const dark = shade(col, -0.3);
+  const c = mk(20, 14), g = c.getContext('2d');
+  const P = (x, y, w, h, cl) => { g.fillStyle = cl; g.fillRect(x, y, w, h); };
+  const jump = pose === 2 && wag ? -1 : 0;
+  if (pose === 1) {
+    // sitting: rear down, front legs straight, head up
+    P(4, 8, 6, 4, col); P(5, 12, 4, 1, dark);
+    P(8, 5, 4, 6, col); P(9, 10, 1, 3, col); P(11, 10, 1, 3, dark);
+    P(2, 9 - wag, 3, 1, col);
+    P(10, 1, 5, 5, col); P(14, 3, 3, 2, col2); P(16, 3, 1, 1, '#1a1418'); P(12, 2, 1, 1, '#1a1418'); P(10, 1, 2, 3, dark);
+  } else {
+    const st = frame === 1 ? 1 : frame === 3 ? -1 : 0;
+    P(5 + st, 9 + jump, 2, 4, dark); P(7 - st, 9 + jump, 2, 4, col);
+    P(12 - st, 9 + jump, 2, 4, dark); P(14 + st, 9 + jump, 2, 4, col);
+    P(4, 5 + jump, 12, 5, col); P(5, 9 + jump, 10, 1, col2);
+    P(14, 1 + jump, 5, 5, col); P(18, 3 + jump, 2, 2, col2); P(19, 3 + jump, 1, 1, '#1a1418'); P(16, 2 + jump, 1, 1, '#1a1418'); P(14, 1 + jump, 2, 4, dark);
+    if (seed % 3 === 0) { P(7, 5 + jump, 3, 2, col2); P(11, 6 + jump, 2, 2, dark); }
+    // tail
+    if (wag) { P(1, 3 + jump, 1, 2, col); P(2, 4 + jump, 2, 1, col); } else { P(1, 5 + jump, 3, 1, col); P(0, 4 + jump, 1, 1, col); }
+  }
+  outline(c);
+  c.ax = 10; c.ay = 13; c.top = 16;
+  return c;
+}
+function paintCat(seed, frame, pose, wag) {
+  const [col, col2] = CAT_COLS[seed % 5];
+  const dark = shade(col, -0.3);
+  const eye = seed % 2 ? '#c8ff3f' : '#ffd23f';
+  const c = mk(18, 13), g = c.getContext('2d');
+  const P = (x, y, w, h, cl) => { g.fillStyle = cl; g.fillRect(x, y, w, h); };
+  if (pose === 1 || pose === 2) {
+    // sitting upright, tail curled around
+    P(7, 5, 5, 6, col); P(8, 10, 1, 2, col); P(10, 10, 1, 2, col); P(8, 7, 3, 3, col2);
+    P(3, 11, 5, 1, col); P(3, 9 + wag, 1, 2, col);
+    P(7, 1, 5, 4, col); P(7, 0, 1, 1, col); P(11, 0, 1, 1, col); P(9, 2, 1, 1, eye); P(11, 2, 1, 1, eye); P(10, 3, 1, 1, '#ff9ab8');
+    if (seed % 5 === 0) { P(7, 6, 1, 1, dark); P(11, 7, 1, 1, dark); }
+  } else {
+    const st = frame === 1 ? 1 : frame === 3 ? -1 : 0;
+    P(5 + st, 8, 1, 4, dark); P(7 - st, 8, 1, 4, col); P(11 - st, 8, 1, 4, dark); P(13 + st, 8, 1, 4, col);
+    P(4, 5, 10, 4, col); P(5, 8, 8, 1, col2);
+    if (seed % 5 === 0) { P(6, 5, 1, 3, dark); P(9, 5, 1, 3, dark); P(12, 5, 1, 2, dark); }
+    P(12, 2, 5, 4, col); P(12, 1, 1, 1, col); P(16, 1, 1, 1, col); P(15, 3, 1, 1, eye); P(17, 4, 1, 1, '#ff9ab8');
+    // tail up, swaying
+    P(2, 2 + wag, 1, 4, col); P(3, 5, 2, 1, col); P(1, 1 + wag, 1, 1, col);
+  }
+  outline(c);
+  c.ax = 9; c.ay = 12; c.top = 14;
+  return c;
+}
+
 // ------------------------------------------------------------------ specs
 export function playerSpec(look, mods = {}, gangColor = '#ff3f8e') {
   return {
@@ -340,6 +474,7 @@ export function playerSpec(look, mods = {}, gangColor = '#ff3f8e') {
 
 export function enemySpec(faction, tier, id = 0, boss = false) {
   const F = FACTIONS[faction];
+  if (F.alien) return { special: 'alien', tier: Math.min(5, tier), top: ['', '#2a3a4a', '#1f3a2a', '#3a2a4a', '#2a3a1e', '#1a1a24'][Math.min(5, tier)] || '#2a3a4a' };
   const skin = F.skin[id % F.skin.length];
   if (boss) {
     if (faction === 0) return { bulk: 2.6, skin, hair: 'none', top: '#3d4428', top2: '#59613a', pants: '#2a2d1c', mask: 'skull', hat: 'beret', hatColor: '#7a1d1d', eye: '#ff3b5c', armor: 3, coat: true, belt: '#c9c05a' };
@@ -423,6 +558,7 @@ export function charSprite(spec, dir, frame) {
   if (c) return c;
   if (spec.special === 'drone' || spec.special === 'pdrone') c = paintDrone(frame, spec.special === 'pdrone');
   else if (spec.special === 'dog') { c = paintDog(frame, spec); if (dir === 1) c = flipX(c); }
+  else if (spec.special === 'alien') c = paintAlien(spec.tier, dir, frame);
   else if (spec.special) { c = paintMech(spec.special, frame); if (dir === 1) c = flipX(c); }
   else c = paintHumanoid(spec, dir, frame);
   if (charCache.size > 1500) charCache.delete(charCache.keys().next().value);
@@ -454,6 +590,7 @@ export function armSprite(kind, armColor = '#aeb9c9') {
     case 'rail': forearm(4); P(4, m - 2, 16, 2, '#3a3d48'); P(4, m + 1, 16, 2, '#3a3d48'); for (let i = 0; i < 4; i++) P(6 + i * 4, m - 1, 2, 2, '#22e5ff'); P(20, m - 2, 1, 5, '#9af0ff'); break;
     case 'flamer': forearm(5); P(5, m - 2, 6, 5, '#6a3a2a'); P(5, m - 2, 6, 1, '#8a5a3a'); P(11, m - 1, 5, 2, '#3a3d48'); P(16, m - 1, 2, 2, '#ff8a3d'); P(6, m + 2, 3, 1, '#ffd23f'); break;
     case 'claw': forearm(6); P(6, m - 2, 2, 1, '#e8f6ff'); P(6, m, 3, 1, '#e8f6ff'); P(6, m + 2, 2, 1, '#e8f6ff'); break;
+    case 'ufo': forearm(4); P(4, m - 2, 8, 5, '#2a3a2a'); P(4, m - 2, 8, 1, '#4a5a4a'); P(6, m - 2, 1, 5, '#7dff4a'); P(9, m - 2, 1, 5, '#7dff4a'); P(12, m - 3, 2, 7, '#a8b4bc'); P(14, m - 1, 2, 3, '#7dff4a'); P(16, m, 2, 1, '#d8ffd0'); break;
     case 'chain': forearm(5); P(5, m - 2, 5, 5, '#3a3d48'); P(10, m - 3, 2, 7, '#56606e'); P(12, m - 2, 2, 5, '#9af0ff'); P(14, m - 1, 2, 3, '#e8f6ff'); P(16, m, 2, 1, '#9af0ff'); P(6, m - 1, 3, 1, '#22e5ff'); break;
     default: forearm(6);
   }
@@ -462,7 +599,7 @@ export function armSprite(kind, armColor = '#aeb9c9') {
   return c;
 }
 
-export const ENEMY_ARM = { melee: 'claw', gun: 'pistol', shotgun: 'shotgun', burst: 'smg', slam: 'hammer', rocket: 'rocket', boss: 'rail' };
+export const ENEMY_ARM = { melee: 'claw', gun: 'pistol', shotgun: 'shotgun', burst: 'smg', slam: 'hammer', rocket: 'rocket', boss: 'rail', plasma: 'ufo' };
 
 // ------------------------------------------------------------------ emissive helpers
 // Many sprites have glowing parts (neon, lamps, screens). They are painted twice: on the sprite itself and on a

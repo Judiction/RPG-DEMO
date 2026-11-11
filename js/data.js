@@ -4,7 +4,7 @@
 export const TILE = 16;
 
 export const GAME_NAME = 'NEON QUEBRADA';
-export const VERSION = '0.61';
+export const VERSION = '0.62';
 // 3D buildings: camera height (smaller = stronger lean, you see more of the facades) and a height multiplier
 export const PERSPECTIVE = { camZ: 400, heightMul: 1.3 };      // shown on the title screen; bump to 0.61, 0.62... for each fix before a GitHub sync
 
@@ -41,6 +41,13 @@ export const FACTIONS = [
     tiers: ['Soldado PM', 'Cabo PM', 'Choque', 'Drone PM', 'Mecha Choque'],
     boss: 'Comandante', biomes: {},
   },
+  {
+    // random event: a flying saucer drops them on a gang. They fight everyone.
+    id: 4, name: 'ETs de Varginha', short: 'ETs', color: '#7dff4a', alien: true,
+    uniform: '#2a3a4a', uniform2: '#1a2430', accent: '#7dff4a', skin: ['#a8b4bc', '#8ac08a', '#b0a0c8'],
+    tiers: ['ET Observador', 'ET Caçador', 'ET Guerreiro', 'ET Bruto', 'ET Comandante'],
+    boss: 'Mãe Nave', biomes: {},
+  },
 ];
 
 // ------------------------------------------------------------------ maps
@@ -75,6 +82,7 @@ export const ATTACKS = {
   slam: { range: 28, windup: 0.6, cd: 2.4, radius: 34 },
   rocket: { range: 170, windup: 0.6, cd: 3.2, speed: 110, radius: 34 },
   boss: { range: 200, windup: 0.5, cd: 1.6 },
+  plasma: { range: 150, windup: 0.3, cd: 1.25, speed: 150 },
 };
 
 // ------------------------------------------------------------------ player weapons (arms)
@@ -123,6 +131,11 @@ export const WEAPONS = {
   chain: {
     name: 'Chain Lightning', pt: 'Raio Encadeado', kind: 'chain', dmg: 24, cd: 0.75, range: 150, jumps: 4, jumpR: 72, price: 2600, lvl: 11,
     desc: 'A bolt that jumps from enemy to enemy (up to 5). Stuns drones for a moment.',
+  },
+  // rare: only dropped by the ET Comandante (alien invasion). Never sold.
+  ufo: {
+    name: 'Varginha Ray', pt: 'Raio de Varginha', kind: 'beam', dmg: 30, cd: 0.5, range: 215, color: '#7dff4a', rare: true, price: 3000, lvl: 1,
+    desc: 'Alien tech from the ET Comandante. A fast green ray that cuts through everything in line.',
   },
 };
 // grenades: a pouch next to the arms. Z throws at the cursor, C switches type. Up to 3 of each.
@@ -249,6 +262,28 @@ export const HELI = { speed: 210, attackT: 13, radius: 86, back: 45, mg: { cd: 0
 export const CIV_CARS = { perPlayer: 3, max: 10, speed: [55, 80], theft: 35 };
 // Rei da Boca: hold the central BOCA KING base for this long in total to win (host can change it)
 export const KING_TIMES = [5, 10, 15, 20];
+
+// ------------------------------------------------------------------ v0.62
+// NPC targeting ("aggro"): hit back at whoever hurt you lately, otherwise the closest enemy in sight.
+// Scores are distances: lower wins. attackerK shrinks the score of recent attackers, stickK of the current target.
+export const AGGRO = { memory: 4, attackerK: 0.45, stickK: 0.7, rethink: 0.5 };
+// base guards: calm = walk around outside the walls; defense = enemies inside the walls, everyone goes in
+export const GUARD = { ringMin: 2, ringMax: 5, spot: 11, calmAfter: 4 };
+// turrets on the walls stand high: they see and shoot farther
+export const WALL_TURRET_RANGE = 1.35;
+// base under attack: the alarm repeats while the fight goes on
+export const BASE_ALARM = { repeat: 45, hitMemory: 5 };
+// cats and dogs around the city (they can't be hurt; gunshots scare them)
+export const PETS = { perPlayer: 3, max: 14, speed: 24, fleeSpeed: 92 };
+// alien invasion: once or twice per game, a saucer drops ETs right around a player
+export const ALIENS = {
+  first: [600, 1260],          // seconds of play before the first one can come
+  again: [900, 1500],          // and between the first and the second
+  chance2: 0.6,                // chance there is a second invasion at all
+  warn: 8, beamT: 4, hoverT: 30,
+  count: (players) => Math.min(16, 6 + 2 * players),
+  hp: 2.0, dmg: 1.25, reward: 2.5,
+};
 export const TURRET_HP_MULT = 2.5;          // turrets take a lot of damage before they go down (then you buy a new one)
 export const TURRET_REPAIR_K = 0.6;         // repair cost = missing HP share × price × this
 export const FACTION_UPGRADE_T = 75;        // seconds between NPC faction upgrade purchases
@@ -411,7 +446,7 @@ export const POLICE_WAVES = [
 // ------------------------------------------------------------------ bar interior layout (pixels, interior space)
 // One shared layout (colors and names change per bar). Solid rects block movement.
 // machines bleed oil and sparks instead of blood (faction → tiers that are drones, mechs, armored trucks)
-const MECH_TIERS = { 0: [5], 1: [1, 5], 2: [5], 3: [4, 5] };
+const MECH_TIERS = { 0: [5], 1: [1, 5], 2: [5], 3: [4, 5], 4: [] };
 export const isMech = (faction, tier, boss = false) => !boss && !!(MECH_TIERS[faction] && MECH_TIERS[faction].includes(tier));
 
 export const BAR_ROOM = {

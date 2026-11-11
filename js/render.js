@@ -8,11 +8,11 @@
 //   5. bloom, flying vehicles, holograms, silhouettes of players hidden behind buildings, tags and overlays
 // The game is drawn at low resolution (~640 px wide) and scaled up with crisp pixels.
 
-import { TILE, FACTIONS, WEAPONS, GANG_COLORS, VEHICLES, BRANDS, BAR_ROOM, ITEMS, isMech, CREW_WEAPONS, DOWN, GRENADES } from './data.js';
+import { TILE, FACTIONS, WEAPONS, GANG_COLORS, VEHICLES, BRANDS, BAR_ROOM, ITEMS, isMech, CREW_WEAPONS, DOWN, GRENADES, ALIENS } from './data.js';
 import { T, CHUNK, STATION_COLORS } from './world.js';
 import {
   getTileset, charSprite, armSprite, propSprite, playerSpec, enemySpec, allySpec, followerSpec, civilianSpec, ENEMY_ARM,
-  flashOf, shade, rgba, mk, breakSprite, vehicleSprite, turretBase, turretHead, holoSprite, hexToRgb, drawLogo,
+  flashOf, shade, rgba, mk, breakSprite, vehicleSprite, turretBase, turretHead, holoSprite, hexToRgb, drawLogo, petSprite,
 } from './sprites.js';
 import { CAM_Z, projK, buildingArt, bakeBuilding, neonState, neonIsOff } from './buildings.js';
 import { drawText, textSprite } from './font.js';
@@ -176,6 +176,7 @@ export function createRenderer(canvas) {
     drawDecals(dt);
     drawStains(dt);
     for (const h of view.helis || []) shadow(h.x + 10, h.y + 14, 13, 0.25);
+    if (view.ufo) { const q = ufoPos(view.ufo); ctx.fillStyle = `rgba(4,2,12,${Math.max(0.08, 0.32 - (q.z - 110) / 900)})`; pixCircleFill(q.x + 12, q.y + 16, 44, 0.42); }
     drawCores(view);
     for (const e of R.effects) if (e.k === 'tele') {
       const p = Math.min(1, e.t / e.d);
@@ -191,6 +192,10 @@ export function createRenderer(canvas) {
         ctx.fillStyle = '#2fa84f'; ctx.fillRect(k.x - 4, k.y - 6 + bob, 8, 5);
         ctx.fillStyle = '#7dff9a'; ctx.fillRect(k.x - 3, k.y - 5 + bob, 6, 1);
         ctx.fillStyle = '#ffd23f'; ctx.fillRect(k.x - 1, k.y - 5 + bob, 2, 3);
+      } else if (k.type === 'ufo') {
+        const sp = armSprite('ufo', '#a8b4bc');
+        ctx.drawImage(sp, Math.round(k.x - 11), Math.round(k.y - 13 + bob));
+        if (Math.random() < 0.25) R.particles.push({ x: k.x + (Math.random() - 0.5) * 14, y: k.y - 8, vx: 0, vy: -18, life: 0.6, t: 0, c: Math.random() < 0.5 ? '#7dff4a' : '#d8ffd0', g: 0, sz: 1, em: true });
       } else {
         ctx.fillStyle = '#1f9e3a'; ctx.fillRect(k.x - 2, k.y - 9 + bob, 5, 8);
         ctx.fillStyle = '#ff3b3b'; ctx.fillRect(k.x - 2, k.y - 7 + bob, 5, 3);
@@ -217,6 +222,7 @@ export function createRenderer(canvas) {
     for (const e of view.enemies) list.push({ y: e.y, en: e });
     for (const a of view.allies) list.push({ y: a.y, al: a });
     for (const c of view.civs || []) if (inView(c.x, c.y)) list.push({ y: c.y, cv: c });
+    for (const a of view.pets || []) if (inView(a.x, a.y)) list.push({ y: a.y, pt: a });
     const raised = [];
     for (const t of view.turrets || []) { if (world.tiles[Math.floor(t.y / TILE - 0.2) * world.W + Math.floor(t.x / TILE)] === T.WALL) raised.push(t); else list.push({ y: t.y, tu: t }); }
     const flying = [];
@@ -239,6 +245,7 @@ export function createRenderer(canvas) {
       else if (d.en) drawEnemy(d.en, dt);
       else if (d.al) drawAlly(d.al, view, dt);
       else if (d.cv) drawCiv(d.cv, view, dt);
+      else if (d.pt) drawPet(d.pt, dt);
       else if (d.tu) drawTurret(d.tu, view, emq);
       else if (d.ve) drawVehicle(d.ve, view, dt, emq, ox, oy, false);
       else if (d.hg) drawHangout(d.hg, d.own, dt);
@@ -517,6 +524,11 @@ export function createRenderer(canvas) {
     for (const e of view.enemies) if (e.burn) out.push({ x: e.x, y: e.y - 8, r: 34, c: '#ff8a3d', i: 0.7 });
     for (const h of world.holos) if (near(h.x, h.y, 90)) out.push({ x: h.x, y: h.y + 10, r: 80, c: BRANDS[h.brand].c, i: 0.6 });
     for (const l of R.policeLights(view)) out.push(l);
+    if (view.ufo) {
+      const q = ufoPos(view.ufo);
+      out.push({ x: q.x, y: q.y, r: view.ufo.state === 'beam' ? 180 : 120, c: '#7dff4a', i: view.ufo.state === 'warn' ? 0.5 : 1.3, bloom: true });
+    }
+    for (const k of view.pickups) if (k.type === 'ufo') out.push({ x: k.x, y: k.y - 6, r: 54, c: '#7dff4a', i: 1, bloom: true });
     for (const h of view.helis || []) {
       const gx = h.x + Math.cos(h.aim || 0) * 46, gy = h.y + Math.sin(h.aim || 0) * 46;
       out.push({ x: gx, y: gy, r: 110, c: '#f4f8ff', i: 1.2, bloom: true });
@@ -851,7 +863,7 @@ export function createRenderer(canvas) {
     const key = 'e' + e.id;
     const spec = specFor(`E${e.faction}-${e.tier}-${e.id % 3}-${e.boss ? 1 : 0}`, () => enemySpec(e.faction, e.boss ? 6 : e.tier, e.id % 3, e.boss));
     let arms = null;
-    if (!spec.special) {
+    if (!spec.special || spec.special === 'alien') {
       const kind = ENEMY_ARM[e.atk] || 'pistol';
       const col = shade(spec.top, -0.1);
       arms = e.boss ? [{ slot: 'L', kind: 'rail', color: col }, { slot: 'R', kind: kind === 'rail' ? 'rocket' : kind, color: col }] : [{ slot: 'R', kind, color: col }];
@@ -859,7 +871,7 @@ export function createRenderer(canvas) {
     const flash = e.flash > 0 || (e.windup > 0 && Math.floor(R.time * 16) % 2 === 0);
     const s = drawCharacter(key, e.x, e.y, e.aim, spec, arms, dt, { flash, moving: e.moving, burn: e.burn });
     e._top = s.top;
-    if (e.hp < e.maxHp * 0.35) drip(e.x, e.y, dt, spec.special && spec.special !== 'dog');
+    if (e.hp < e.maxHp * 0.35) drip(e.x, e.y, dt, spec.special === 'alien' ? 'alien' : !!(spec.special && spec.special !== 'dog'));
     if (e.stunT > 0) for (let i = 0; i < 3; i++) { const a = R.time * 5 + i * 2.1; ctx.fillStyle = i % 2 ? '#ffd23f' : '#9af0ff'; ctx.fillRect(Math.round(e.x + Math.cos(a) * 6), Math.round(e.y - s.top - 4 + Math.sin(a) * 2), 2, 2); }
     if (e.windup > 0 && Math.floor(R.time * 16) % 2) {
       ctx.globalAlpha = 0.5;
@@ -883,10 +895,26 @@ export function createRenderer(canvas) {
       if (lv >= 5 && Math.random() < 0.08) R.particles.push({ x: al.x + (Math.random() - 0.5) * 8, y: al.y - Math.random() * 16, vx: 0, vy: -14, life: 0.5, t: 0, c: gc, g: 0, sz: 1, em: true });
     }
     else { spec = specFor('A' + (al.id % 4) + gc, () => allySpec(gc, al.id % 4)); weapon = 'pistol'; }
+    if (al.emote) { const s0 = drawDancer('a' + al.id, al.x, al.y, spec, al.emote - 1, dt, al.id % 5); al._top = s0.top; return; }
     const s = drawCharacter('a' + al.id, al.x, al.y, al.aim, spec, [{ slot: 'R', kind: weapon, color: al.civ ? '#8a8494' : shade(spec.top, -0.1) }], dt, { flash: al.flash > 0, moving: al.moving });
     al._top = s.top;
     if (al.hp < al.maxHp * 0.35) drip(al.x, al.y, dt, false);
     if (al.rev && Math.random() < 0.25) R.particles.push({ x: al.x + (Math.random() - 0.5) * 8, y: al.y - 10, vx: 0, vy: -18, life: 0.5, t: 0, c: '#3ddc84', g: 0, sz: 1, em: true });
+  }
+
+  // cats and dogs
+  function drawPet(a, dt) {
+    const an = stepAnim('pt' + a.id, a.x, a.y, dt);
+    const moving = a.moving ?? an.moving;
+    const frame = moving ? 1 + (Math.floor(an.dist / (a.flee ? 4 : 2.5)) % 4) : 0;
+    const pose = a.happy ? 2 : a.sit && !moving ? 1 : 0;
+    const sp = petSprite(a.kind, a.seed, frame, pose, Math.cos(a.aim || 0) < 0, R.time + (a.id % 7) * 0.13);
+    shadow(a.x, a.y, 5, 0.3);
+    const hop = a.happy && a.kind === 'dog' ? -Math.round(Math.abs(Math.sin(R.time * 9)) * 2) : 0;
+    ctx.drawImage(sp, Math.round(a.x - sp.ax), Math.round(a.y - sp.ay + hop));
+    a._top = sp.top;
+    if (a.flee && Math.random() < dt * 0.7) R.text(a.x, a.y - 16, a.kind === 'dog' ? 'AU!' : 'FSSS!', '#ffffff', 0.7, -12);
+    if (a.happy && Math.random() < dt * 3) R.particles.push({ x: a.x + (Math.random() - 0.5) * 6, y: a.y - 14, vx: (Math.random() - 0.5) * 8, vy: -18, life: 0.8, t: 0, c: '#ff3fa4', g: 0, sz: 2, em: true });
   }
 
   function drawCiv(c, view, dt) {
@@ -1061,6 +1089,7 @@ export function createRenderer(canvas) {
   const PROJ = {
     pulse: ['#22e5ff', '#ffffff', 3], pellet: ['#ffb84a', '#fff0a0', 2], smart: ['#3ddc84', '#d0ffe0', 2], tbullet: ['#ffd23f', '#ffffff', 3],
     rocket: ['#ff8a3d', '#ffffff', 4], ebullet: ['#ff3b5c', '#ffd0d8', 3], eball: ['#c86bff', '#ffffff', 4], erocket: ['#ff3b5c', '#ffffff', 4],
+    eplasma: ['#7dff4a', '#e8ffd8', 4],
   };
   function drawProjectiles(projs) {
     for (const p of projs) {
@@ -1071,8 +1100,8 @@ export function createRenderer(canvas) {
       ctx.fillStyle = st[0];
       for (let i = 1; i <= st[2] + 2; i++) { ctx.globalAlpha = 1 - i / (st[2] + 3); ctx.fillRect(Math.round(p.x - ux * i * 1.6), Math.round(p.y - uy * i * 1.6), 1, 1); }
       ctx.globalAlpha = 1;
-      if (p.kind === 'ebullet' || p.kind === 'eball') {
-        const r = p.kind === 'eball' ? 2 : 1;
+      if (p.kind === 'ebullet' || p.kind === 'eball' || p.kind === 'eplasma') {
+        const r = p.kind === 'ebullet' ? 1 : 2;
         ctx.fillRect(x - r, y - r, r * 2 + 1, r * 2 + 1);
         ctx.fillStyle = st[1]; ctx.fillRect(x, y, 1, 1);
       } else if (p.kind === 'rocket' || p.kind === 'erocket') {
@@ -1249,6 +1278,8 @@ export function createRenderer(canvas) {
           if ((a.lvl || 1) > 1) drawText(ctx, '*'.repeat(a.lvl - 1), a.x, top - 12, '#ffd23f');
         }
         if (a.hp < a.maxHp || hostile) hpBar(a.x, top - 1, 12, a.hp / a.maxHp, hostile ? '#ff3b5c' : gc);
+      } else if (d.pt) {
+        if (view.petPrompt === d.pt.id) drawText(ctx, '[G]', d.pt.x, d.pt.y - (d.pt._top || 14) - 4, Math.floor(R.time * 3) % 2 ? '#ffd23f' : '#ffffff');
       } else if (d.cv) {
         const c = d.cv;
         if (c.hpPct < 100) hpBar(c.x, c.y - (c._top || 24) - 1, 10, c.hpPct / 100, '#c8c0d8');
@@ -1297,6 +1328,22 @@ export function createRenderer(canvas) {
     R.texts = keep;
   }
 
+  // a big red pointer circling your character, pointing at the base under attack (never hidden by the HUD panels)
+  function alarmArrow(x, y, col, label, sub, view, ox, oy) {
+    const me = view.me;
+    const cx = me ? me.x - ox : R.vw / 2, cy = me ? me.y - 12 - oy : R.vh / 2;
+    const a = Math.atan2(y - cy, x - cx);
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const rr = 40 + Math.sin(R.time * 6) * 3;
+    const px = cx + ca * rr, py = cy + sa * rr * 0.85;
+    ctx.fillStyle = '#120a1c';
+    for (let i = -1; i < 10; i++) for (let j = -i - 1; j <= i + 1; j++) { const lx = 10 - i, ly = j * 0.7; ctx.fillRect(Math.round(px + ca * lx - sa * ly), Math.round(py + sa * lx + ca * ly), 1, 1); }
+    ctx.fillStyle = col;
+    for (let i = 0; i < 9; i++) for (let j = -i; j <= i; j++) { const lx = 10 - i, ly = j * 0.7; ctx.fillRect(Math.round(px + ca * lx - sa * ly), Math.round(py + sa * lx + ca * ly), 1, 1); }
+    const tx = px + ca * 24, ty = py + sa * 18;
+    drawText(ctx, label, tx, ty - 4, col, 'center', '#120a1c');
+    if (sub) drawText(ctx, sub, tx, ty + 4, '#ffffff', 'center', '#120a1c');
+  }
   function edgeArrow(x, y, col, label, sub) {
     const cx = R.vw / 2, cy = R.vh / 2;
     const a = Math.atan2(y - cy, x - cx);
@@ -1313,6 +1360,19 @@ export function createRenderer(canvas) {
   }
 
   function drawRaidArrows(view, ox, oy) {
+    // our bases under attack: a red arrow on the screen edge until the fight is over
+    const myId = 'g' + view.myGang;
+    const ac = Math.floor(R.time * 4) % 2 ? '#ff3b5c' : '#ffffff';
+    for (const Rg of view.world.regions) {
+      const rs = view.rs[Rg.id];
+      if (!rs || !rs.atk || rs.owner !== myId) continue;
+      const C = Rg.compound;
+      const wx = (C.coreX + 0.5) * TILE, wy = (C.coreY + 0.5) * TILE;
+      const x = wx - ox, y = wy - oy;
+      if (x > 8 && x < R.vw - 8 && y > 8 && y < R.vh - 8) continue;
+      const d = view.me ? Math.round(Math.hypot(wx - view.me.x, wy - view.me.y) / TILE) : 0;
+      alarmArrow(x, y, ac, Rg.base ? 'BASE!' : 'ATTACK', d + 'm', view, ox, oy);
+    }
     if (!view.raids) return;
     for (const r of view.raids) {
       if (view.mode === 'pvp' && r.g !== view.myGang) continue;
@@ -1407,6 +1467,21 @@ export function createRenderer(canvas) {
         for (let k = 0; k < 3; k++) { const [px, py] = pt(a - 0.06 + k * 0.06, r + 4 - Math.abs(k - 1) * 2); ctx.fillRect(px - 1, py - 1, 2, 2); }
       }
       ctx.globalAlpha = 1;
+      if (rs.shield) {
+        const pulse = 0.55 + Math.sin(t * 2.4) * 0.2;
+        const sr = r + 9, sy = y - 8;
+        ctx.fillStyle = col;
+        ctx.globalAlpha = 0.1 + 0.07 * pulse;
+        pixCircleFill(x, sy, sr, 0.8);
+        ctx.globalAlpha = 0.35 + 0.5 * pulse;
+        pixCircle(x, sy, sr, col, 0.8);
+        pixCircle(x, sy - 3, sr - 6, col, 0.55);
+        ctx.globalAlpha = 0.8;
+        for (let i = 0; i < 12; i++) { const a = t * 0.6 + i * 0.5236; const rr = sr * (0.35 + 0.6 * (((i * 37) % 10) / 10)); ctx.fillRect(Math.round(x + Math.cos(a) * rr), Math.round(sy + Math.sin(a) * rr * 0.8), 1, 1); }
+        ctx.globalAlpha = 1;
+        const me = view.me;
+        if (me && rs.owner !== 'g' + view.myGang && Math.abs(me.x - x) < 9 * TILE && Math.abs(me.y - y) < 7 * TILE) drawText(ctx, 'SHIELDED', x, sy - sr * 0.8 - 8, col);
+      }
       if (rs.capture > 0) {
         const cc = rs.capBy === 'raid' ? '#ff3b5c' : rs.capBy !== null && rs.capBy !== undefined ? ownerColor(rs.capBy) : '#ff3b5c';
         ctx.globalAlpha = 0.12 + Math.sin(t * 8) * 0.05;
@@ -1615,10 +1690,13 @@ export function createRenderer(canvas) {
   // ---------------------------------------------------------------- blood (oil and sparks for machines)
   const BLOOD = ['#7a0610', '#9a0c18', '#b81624', '#5a040c'];
   const OIL = ['#121218', '#1e1e28', '#2a2636', '#0e0e0a'];
+  const GOO = ['#2a6a12', '#3a8a1a', '#4aaa22', '#6ad03a'];
   // a hit: a spray of drops flying away from the shot, falling to the floor where they stain
   R.bleed = (x, y, amount, dir, mech, floorY) => {
     if (!R.bloodOn) return;
-    const cols = mech ? OIL : BLOOD;
+    const goo = mech === 'alien';
+    if (goo) mech = false;
+    const cols = goo ? GOO : mech ? OIL : BLOOD;
     const n = Math.min(34, 6 + Math.round(amount * 0.7));
     for (let i = 0; i < n; i++) {
       const a = dir !== undefined && dir !== null ? dir + (Math.random() - 0.5) * 1.3 : Math.random() * 6.28;
@@ -1631,9 +1709,11 @@ export function createRenderer(canvas) {
   // a body: a pool that spreads over a couple of seconds
   R.pool = (x, y, size, mech) => {
     if (!R.bloodOn) return;
-    R.stains.push({ x, y, r: 0, rmax: size, c: mech ? OIL[1] : BLOOD[1], c2: mech ? '#3a3448' : '#c41e2a', t: 0, life: 32 + Math.random() * 4, pool: true, oil: mech });
-    for (let i = 0; i < 6; i++) { const a = Math.random() * 6.28, d = size * (0.8 + Math.random() * 0.9); addStain(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.6, 1 + (Math.random() < 0.4 ? 1 : 0), mech ? OIL[0] : BLOOD[0], mech); }
-    R.bleed(x, y - 10, 30, null, mech, y);
+    const goo = mech === 'alien';
+    if (goo) mech = false;
+    R.stains.push({ x, y, r: 0, rmax: size, c: goo ? GOO[1] : mech ? OIL[1] : BLOOD[1], c2: goo ? '#8aff5a' : mech ? '#3a3448' : '#c41e2a', t: 0, life: 32 + Math.random() * 4, pool: true, oil: mech });
+    for (let i = 0; i < 6; i++) { const a = Math.random() * 6.28, d = size * (0.8 + Math.random() * 0.9); addStain(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.6, 1 + (Math.random() < 0.4 ? 1 : 0), goo ? GOO[0] : mech ? OIL[0] : BLOOD[0], mech); }
+    R.bleed(x, y - 10, 30, null, goo ? 'alien' : mech, y);
   };
   function addStain(x, y, sz, c, oil, splat = 0) {
     if (!R.bloodOn) return;
@@ -1641,7 +1721,8 @@ export function createRenderer(canvas) {
     if (R.stains.length > 700) R.stains.splice(0, R.stains.length - 700);
   }
   function drip(x, y, dt, mech) {
-    if (R.bloodOn && Math.random() < dt * 2.5) addStain(x + (Math.random() - 0.5) * 5, y + (Math.random() - 0.5) * 2, 1, mech ? OIL[0] : BLOOD[(Math.random() * 3) | 0], mech);
+    const goo = mech === 'alien';
+    if (R.bloodOn && Math.random() < dt * 2.5) addStain(x + (Math.random() - 0.5) * 5, y + (Math.random() - 0.5) * 2, 1, goo ? GOO[(Math.random() * 3) | 0] : mech ? OIL[0] : BLOOD[(Math.random() * 3) | 0], mech === true);
   }
   function drawStains(dt) {
     if (!R.stains.length) return;
@@ -1812,6 +1893,65 @@ export function createRenderer(canvas) {
       const ra = R.time * 38;
       for (let k = 0; k < 2; k++) { const b = ra + k * Math.PI / 2; line(X - Math.cos(b) * 31, Y - Math.sin(b) * 31, X + Math.cos(b) * 31, Y + Math.sin(b) * 31); line(X - Math.cos(b) * 31, Y - Math.sin(b) * 31 + 1, X + Math.cos(b) * 31, Y + Math.sin(b) * 31 + 1); }
       ctx.globalAlpha = 1;
+    }
+    if (view.ufo) drawUfo(view.ufo, ox, oy, night);
+  }
+  // where the saucer is: flying in during the warning, low over the drop point, then away
+  function ufoPos(u) {
+    let dx = 0, dy = 0, z = 110;
+    if (u.state === 'warn') { const k = Math.max(0, Math.min(1, u.t / ALIENS.warn)); dx = -340 * k; dy = -180 * k; z = 110 + 260 * k; }
+    else if (u.state === 'leave') { const k = 1 - Math.max(0, Math.min(1, u.t / 3)); dx = 460 * k * k; dy = -220 * k * k; z = 110 + 320 * k; }
+    else z = 110 + Math.sin(R.time * 1.6) * 4;
+    return { x: u.x + dx, y: u.y + dy, z };
+  }
+  function drawUfo(u, ox, oy, night) {
+    const q = ufoPos(u);
+    const [X, Y0] = P3(q.x, q.y, q.z);
+    const Y = Y0 - q.z * 0.6;          // way up in the sky: the beam reaches down to the street
+    if (X < -200 || X > R.vw + 200 || Y < -200 || Y > R.vh + 200) return;
+    const sc = 1 + (q.z - 110) / 500;
+    // tractor beam down to the street
+    if (u.state === 'beam' || (u.state === 'hover' && Math.sin(R.time * 0.9) > 0.55)) {
+      const gx = q.x - ox, gy = q.y - oy;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = (u.state === 'beam' ? 0.26 : 0.12) + 0.08 * night;
+      ctx.fillStyle = '#7dff4a';
+      ctx.beginPath(); ctx.moveTo(X - 16, Y + 8); ctx.lineTo(X + 16, Y + 8); ctx.lineTo(gx + 36, gy); ctx.lineTo(gx - 36, gy); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha = 0.45;
+      for (let i = 0; i < 4; i++) { const f = (R.time * 0.9 + i / 4) % 1; pixCircle(X + (gx - X) * f, Y + 8 + (gy - Y - 8) * f, 16 + 20 * f, '#b8ffd0', 0.3); }
+      ctx.globalAlpha = 0.3; ctx.fillStyle = '#7dff4a'; pixCircleFill(gx, gy, 36, 0.45);
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+    }
+    const W = Math.round(50 * sc), H = Math.max(6, Math.round(11 * sc));
+    // glow under the hull
+    ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.35 + 0.15 * Math.sin(R.time * 5); ctx.fillStyle = '#7dff4a'; pixCircleFill(X, Y + H * 0.5, W * 0.55, 0.3); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+    // the hull: a fat metal disc
+    for (let dy = -H; dy <= H; dy++) {
+      const w = Math.round(W * Math.sqrt(Math.max(0, 1 - (dy / H) ** 2)));
+      ctx.fillStyle = dy < -H * 0.45 ? '#d4dce8' : dy < 0 ? '#a8b2c2' : dy < H * 0.35 ? '#5a6274' : '#3a4050';
+      ctx.fillRect(Math.round(X - w), Math.round(Y + dy), w * 2, 1);
+    }
+    ctx.fillStyle = '#2a2e3a'; ctx.fillRect(Math.round(X - W), Math.round(Y), W * 2, 1);
+    // dome with a little grey pilot inside
+    const dw = Math.round(W * 0.38), dh = Math.round(12 * sc), dy0 = Math.round(Y - H * 0.55);
+    for (let k = 0; k < dh; k++) {
+      const w = Math.round(dw * Math.sqrt(1 - (k / dh) ** 2));
+      ctx.fillStyle = k > dh * 0.6 ? '#b8f8ff' : '#6ad8f0';
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(Math.round(X - w), dy0 - k, w * 2, 1);
+    }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#a8b4bc'; ctx.fillRect(Math.round(X - 3 * sc), dy0 - Math.round(8 * sc), Math.round(6 * sc), Math.round(5 * sc));
+    ctx.fillStyle = '#08060c'; ctx.fillRect(Math.round(X - 2 * sc), dy0 - Math.round(6 * sc), Math.max(1, Math.round(1.5 * sc)), 1); ctx.fillRect(Math.round(X + 1 * sc), dy0 - Math.round(6 * sc), Math.max(1, Math.round(1.5 * sc)), 1);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(Math.round(X - dw * 0.5), dy0 - Math.round(dh * 0.7), 2, 1);
+    // running lights around the rim
+    const LC = ['#7dff4a', '#ff3fa4', '#22e5ff', '#ffd23f'];
+    for (let i = 0; i < 12; i++) {
+      const a = R.time * 2.2 + i * Math.PI / 6;
+      if (Math.sin(a) < -0.15) continue;
+      const lx = X + Math.cos(a) * W * 0.86, ly = Y + Math.sin(a) * H * 0.35;
+      ctx.fillStyle = LC[(i + Math.floor(R.time * 6)) % 4];
+      ctx.fillRect(Math.round(lx) - 1, Math.round(ly) - 1, 2, 2);
     }
   }
   function line(x0, y0, x1, y1) {
