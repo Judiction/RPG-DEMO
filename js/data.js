@@ -4,7 +4,7 @@
 export const TILE = 16;
 
 export const GAME_NAME = 'NEON QUEBRADA';
-export const VERSION = '0.6';
+export const VERSION = '0.61';
 // 3D buildings: camera height (smaller = stronger lean, you see more of the facades) and a height multiplier
 export const PERSPECTIVE = { camZ: 400, heightMul: 1.3 };      // shown on the title screen; bump to 0.61, 0.62... for each fix before a GitHub sync
 

@@ -1738,6 +1738,11 @@ export function createRenderer(canvas) {
   // ---------------------------------------------------------------- things up high: turrets on the walls, radar towers, helicopters
   const P3 = (wx, wy, z) => { const k = projK(z); return [R.vw / 2 + (wx - R.ox - R.vw / 2) * k, R.vh / 2 + (wy - R.oy - R.vh / 2) * k]; };
   function drawRaised(view, raised, ox, oy, dt, night) {
+    // works in screen space; the caller's world transform is restored at the end (tags and texts rely on it)
+    ctx.save();
+    try { drawRaisedInner(view, raised, ox, oy, dt, night); } finally { ctx.restore(); }
+  }
+  function drawRaisedInner(view, raised, ox, oy, dt, night) {
     const emq = [];
     // turrets standing on the corners of the compound walls
     for (const t of raised) {
