@@ -8,7 +8,7 @@
 //   5. bloom, flying vehicles, holograms, silhouettes of players hidden behind buildings, tags and overlays
 // The game is drawn at low resolution (~640 px wide) and scaled up with crisp pixels.
 
-import { TILE, FACTIONS, WEAPONS, GANG_COLORS, VEHICLES, BRANDS, BAR_ROOM, ITEMS, isMech, CREW_WEAPONS, DOWN } from './data.js';
+import { TILE, FACTIONS, WEAPONS, GANG_COLORS, VEHICLES, BRANDS, BAR_ROOM, ITEMS, isMech, CREW_WEAPONS, DOWN, GRENADES } from './data.js';
 import { T, CHUNK, STATION_COLORS } from './world.js';
 import {
   getTileset, charSprite, armSprite, propSprite, playerSpec, enemySpec, allySpec, followerSpec, civilianSpec, ENEMY_ARM,
@@ -42,7 +42,7 @@ export function createRenderer(canvas) {
   const R = {
     canvas, ctx, vw: 640, vh: 360, scale: 2,
     cam: { x: 0, y: 0 }, shake: 0, world: null, chunks: new Map(),
-    particles: [], texts: [], effects: [], anim: new Map(), ghosts: [], decals: [], stains: [], bloodOn: true,
+    particles: [], texts: [], effects: [], anim: new Map(), ghosts: [], decals: [], stains: [], bloodOn: true, grenades: [], areas: [],
     mouse: { x: 0, y: 0 }, time: 0, specCache: new Map(), flashT: 0, flashCol: '#ff0000', smokeT: 0,
     quality: 'high', bakeBudget: 0, dynLights: [], trans: new Map(),
   };
@@ -175,6 +175,7 @@ export function createRenderer(canvas) {
     drawWater(world, ox, oy);
     drawDecals(dt);
     drawStains(dt);
+    for (const h of view.helis || []) shadow(h.x + 10, h.y + 14, 13, 0.25);
     drawCores(view);
     for (const e of R.effects) if (e.k === 'tele') {
       const p = Math.min(1, e.t / e.d);
@@ -216,7 +217,8 @@ export function createRenderer(canvas) {
     for (const e of view.enemies) list.push({ y: e.y, en: e });
     for (const a of view.allies) list.push({ y: a.y, al: a });
     for (const c of view.civs || []) if (inView(c.x, c.y)) list.push({ y: c.y, cv: c });
-    for (const t of view.turrets || []) list.push({ y: t.y, tu: t });
+    const raised = [];
+    for (const t of view.turrets || []) { if (world.tiles[Math.floor(t.y / TILE - 0.2) * world.W + Math.floor(t.x / TILE)] === T.WALL) raised.push(t); else list.push({ y: t.y, tu: t }); }
     const flying = [];
     for (const v of view.vehicles || []) {
       if (!inView(v.x, v.y, 80, 100)) continue;
@@ -242,6 +244,8 @@ export function createRenderer(canvas) {
       else if (d.hg) drawHangout(d.hg, d.own, dt);
     }
     drawWires(world, ox, oy);
+    drawGrenades(dt);
+    tickAreas(dt);
     emitSmoke(world, ox, oy, dt);
     drawParticles(dt, 'ground');
 
@@ -261,6 +265,7 @@ export function createRenderer(canvas) {
     // ---- 4. buildings
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     const drawn = drawBuildings(world, ox, oy, amb, night, view);
+    lightRoofs(flying, drawn, ox, oy, night);
     // ---- 5. bloom, sky layer
     drawBloom(lights, ox, oy, night);
     ctx.translate(-ox, -oy);
@@ -272,6 +277,7 @@ export function createRenderer(canvas) {
     drawBunting(view, ox, oy);
     drawFlags(view, ox, oy, night);
     drawBaseSigns(view, ox, oy, night);
+    drawRaised(view, raised, ox, oy, dt, night);
     for (const c of view.pcars || []) drawPoliceCar(c, view, ox, oy, amb);
     drawTags(view, list, flying);
     drawTexts(dt);
@@ -304,6 +310,7 @@ export function createRenderer(canvas) {
     const gy0 = Math.max(0, Math.floor((oy - margin) / CH_PX)), gy1 = Math.min(world.gridH - 1, Math.floor((oy + R.vh + margin) / CH_PX));
     const vis = [];
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) for (const b of R.bgrid[gy * world.gridW + gx]) {
+      if (b.style === 'cwall') { const rs = view.rs[b.compound]; b.wl = rs && rs.up ? rs.up.walls || 0 : 0; }
       const tint = b.compound !== undefined && (b.style === 'cwall' || b.style === 'hq' || b.style === 'shack' || b.style === 'garage' || b.style === 'boca' || b.style === 'brick') ? tintFor(view, b) : null;
       const art = buildingArt(b, tint);
       const k = art.k;
@@ -336,6 +343,19 @@ export function createRenderer(canvas) {
     const H = art.H;
     const step = R.quality === 'low' ? 2 : 1;
     // horizontal walls (south face when the building is above the camera center, north face when below)
+    // height on the wall (z) seen at screen coordinate c along the wall's depth axis
+    const zOf = (c, g, r, sc) => {
+      const den = c - sc;
+      const z = Math.abs(den) < 0.5 ? H * (1 - (c - r) / (g - r)) : CAM_Z * (1 - (g - sc) / den);
+      return Math.max(0, Math.min(H, z));
+    };
+    // each screen row/column takes the whole band of texture rows that falls on it (smoothed), so small lit windows
+    // never pop in and out as the camera moves; only when the band is under a pixel do we take a single row
+    const band = (z1, z2) => {
+      let hi = Math.max(z1, z2), lo = Math.min(z1, z2);
+      if (hi - lo < 1) { const m = Math.min(H - 0.5, Math.max(0.5, (hi + lo) / 2)); hi = m + 0.5; lo = m - 0.5; }
+      return [H - hi, hi - lo];
+    };
     const wallH = (tex, yg, yr, gx0, gx1) => {
       const a = Math.min(yg, yr), bb = Math.max(yg, yr);
       const span = bb - a;
@@ -345,10 +365,8 @@ export function createRenderer(canvas) {
         const yc = y + s / 2;
         const t = (yc - yr) / (yg - yr);
         const xl = rx0 + (gx0 - rx0) * t, xr = rx1 + (gx1 - rx1) * t;
-        const den = yc - scy;
-        let z = Math.abs(den) < 0.5 ? H * (1 - t) : CAM_Z * (1 - (yg - scy) / den);
-        z = Math.max(0, Math.min(H - 0.01, z));
-        ctx.drawImage(tex, 0, (H - z - 0.01) | 0, tex.width, 1, Math.floor(xl), y, Math.ceil(xr) - Math.floor(xl), s);
+        const [sy, sh] = band(zOf(Math.max(a, y), yg, yr, scy), zOf(Math.min(bb, y + s), yg, yr, scy));
+        ctx.drawImage(tex, 0, sy, tex.width, sh, Math.floor(xl), y, Math.ceil(xr) - Math.floor(xl), s);
       }
     };
     const wallV = (tex, xg, xr, gy0, gy1) => {
@@ -360,16 +378,16 @@ export function createRenderer(canvas) {
         const xc = x + s / 2;
         const t = (xc - xr) / (xg - xr);
         const yt = ry0 + (gy0 - ry0) * t, yb = ry1 + (gy1 - ry1) * t;
-        const den = xc - scx;
-        let z = Math.abs(den) < 0.5 ? H * (1 - t) : CAM_Z * (1 - (xg - scx) / den);
-        z = Math.max(0, Math.min(H - 0.01, z));
-        ctx.drawImage(tex, (H - z - 0.01) | 0, 0, 1, tex.height, x, Math.floor(yt), s, Math.ceil(yb) - Math.floor(yt));
+        const [sx, sw] = band(zOf(Math.max(a, x), xg, xr, scx), zOf(Math.min(bb, x + s), xg, xr, scx));
+        ctx.drawImage(tex, sx, 0, sw, tex.height, x, Math.floor(yt), s, Math.ceil(yb) - Math.floor(yt));
       }
     };
+    ctx.imageSmoothingEnabled = true;
     if (y1 < scy) wallH(baked.S[st], y1, ry1, x0, x1);
     if (y0 > scy) wallH(baked.N[st], y0, ry0, x0, x1);
     if (x1 < scx) wallV(baked.E[st], x1, rx1, y0, y1);
     if (x0 > scx) wallV(baked.W[st], x0, rx0, y0, y1);
+    ctx.imageSmoothingEnabled = false;
     const fx = Math.round(rx0), fy = Math.round(ry0);
     ctx.drawImage(baked.roof[st], fx, fy, Math.round(rx1) - fx, Math.round(ry1) - fy);
     // blinking antenna lights and helipad beacons
@@ -378,6 +396,32 @@ export function createRenderer(canvas) {
       const k = (Math.round(rx1) - fx) / art.W;
       for (const bl of blinks) { ctx.fillStyle = bl.c || '#ff3b5c'; ctx.fillRect(Math.round(fx + bl.x * k) - 1, Math.round(fy + bl.y * k) - 1, 2, 2); }
     }
+  }
+
+  // flying vehicles light up the roofs they pass over (their under-glow and headlights)
+  function lightRoofs(flying, drawn, ox, oy, night) {
+    if (!flying.length) return;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.imageSmoothingEnabled = true;
+    for (const v of flying) {
+      const px = (v.sx ?? v.x) - ox, py = (v.sy ?? v.y) - oy;
+      const col = v.civ ? '#ffe6b0' : v.team >= 0 ? GANG_COLORS[v.team] || '#22e5ff' : '#22e5ff';
+      for (const d of drawn) {
+        if (px < d.x0 - 24 || px > d.x1 + 24 || py < d.y0 - 24 || py > d.y1 + 24) continue;
+        const fx = Math.max(0, Math.min(1, (px - d.x0) / (d.x1 - d.x0))), fy = Math.max(0, Math.min(1, (py - d.y0) / (d.y1 - d.y0)));
+        const X = d.rx0 + fx * (d.rx1 - d.rx0), Y = d.ry0 + fy * (d.ry1 - d.ry0);
+        const inside = px >= d.x0 && px <= d.x1 && py >= d.y0 && py <= d.y1;
+        const r = inside ? 84 : 50, a = (inside ? 0.55 : 0.3) * (0.35 + 0.65 * night);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(Math.round(d.rx0), Math.round(d.ry0), Math.round(d.rx1 - d.rx0), Math.round(d.ry1 - d.ry0)); ctx.clip();
+        ctx.globalAlpha = a; ctx.drawImage(lightSprite(col), X - r / 2, Y - r / 2, r, r);
+        ctx.globalAlpha = a * 0.8; ctx.drawImage(lightSprite('#fff4dc'), X - r / 4, Y - r / 4, r / 2, r / 2);
+        ctx.restore();
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.imageSmoothingEnabled = false;
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   // players behind a building show as an outline in their color
@@ -446,7 +490,7 @@ export function createRenderer(canvas) {
         if (l.anim === 'pulse') i *= 0.65 + 0.35 * Math.sin(t * 3 + (l.seed || 0));
       }
       if (l.flicker) { r *= 0.85 + Math.sin(t * 17 + l.x) * 0.08 + Math.random() * 0.07; i *= 0.85 + Math.random() * 0.2; }
-      if (l.night) i *= 0.6 * R.night;
+      if (l.night) i *= (l.spill ? 0.85 : 0.6) * R.night;
       out.push({ x: l.x, y: l.y, r, c, i, bloom: !l.base && !l.night });
     }
     for (const Rg of world.regions) {
@@ -473,6 +517,15 @@ export function createRenderer(canvas) {
     for (const e of view.enemies) if (e.burn) out.push({ x: e.x, y: e.y - 8, r: 34, c: '#ff8a3d', i: 0.7 });
     for (const h of world.holos) if (near(h.x, h.y, 90)) out.push({ x: h.x, y: h.y + 10, r: 80, c: BRANDS[h.brand].c, i: 0.6 });
     for (const l of R.policeLights(view)) out.push(l);
+    for (const h of view.helis || []) {
+      const gx = h.x + Math.cos(h.aim || 0) * 46, gy = h.y + Math.sin(h.aim || 0) * 46;
+      out.push({ x: gx, y: gy, r: 110, c: '#f4f8ff', i: 1.2, bloom: true });
+      out.push({ x: h.x, y: h.y, r: 60, c: Math.floor(t * 6) % 2 ? '#ff2a2a' : '#2a4aff', i: 0.8 });
+    }
+    for (const a of R.areas) {
+      if (a.k === 'fire') out.push({ x: a.x, y: a.y, r: 80 + Math.random() * 10, c: '#ff8a3d', i: 1, bloom: true });
+      else if (a.k === 'emp') out.push({ x: a.x, y: a.y, r: 140, c: '#22e5ff', i: Math.max(0, 1 - a.t), bloom: true });
+    }
     R.dynLights = R.dynLights.filter((l) => (l.t += dt) < l.life);
     for (const l of R.dynLights) {
       const k = 1 - l.t / l.life;
@@ -585,23 +638,33 @@ export function createRenderer(canvas) {
       const col = ownerColor(rs.owner);
       const up = rs.up;
       if (up) {
-        if (up.radar) {
-          const rx = x - 3 * TILE, ry = y - 0.5 * TILE;
-          ctx.fillStyle = '#3a3d48'; ctx.fillRect(rx - 1, ry - 18, 2, 18);
-          const w = Math.round(Math.abs(Math.cos(R.time * 2)) * 6) + 1;
-          ctx.fillStyle = '#c8c8d0'; ctx.fillRect(Math.round(rx - w), ry - 22, w * 2, 4);
-          ctx.fillStyle = Math.floor(R.time * 3) % 2 ? '#3ddc84' : '#1a5a3a'; ctx.fillRect(rx, ry - 24, 1, 2);
-        }
+        if (up.radar) { const rx = x - 3 * TILE, ry = y - 0.6 * TILE; ctx.fillStyle = '#2a2636'; ctx.fillRect(rx - 6, ry - 2, 12, 5); ctx.fillStyle = '#4a4656'; ctx.fillRect(rx - 6, ry - 2, 12, 1); }
         if (up.medic) {
-          const mx = x + 3 * TILE, my = y - 0.5 * TILE;
-          ctx.fillStyle = '#f2f2f2'; ctx.fillRect(mx - 5, my - 14, 10, 10);
-          ctx.fillStyle = '#3ddc84'; ctx.fillRect(mx - 1, my - 13, 2, 8); ctx.fillRect(mx - 4, my - 10, 8, 2);
-          ctx.fillStyle = '#56606e'; ctx.fillRect(mx - 1, my - 4, 2, 6);
+          // medic tent with a cross
+          const mx = x + 3 * TILE, my = y - 1.2 * TILE;
+          ctx.fillStyle = '#d8d8e0'; ctx.fillRect(mx - 10, my - 8, 20, 12); ctx.fillStyle = '#f2f2f2'; ctx.fillRect(mx - 9, my - 11, 18, 4); ctx.fillStyle = '#b8b8c4'; ctx.fillRect(mx - 10, my + 3, 20, 1);
+          ctx.fillStyle = '#ff3b5c'; ctx.fillRect(mx - 1, my - 7, 3, 9); ctx.fillRect(mx - 4, my - 4, 9, 3);
+          ctx.fillStyle = '#2a1a22'; ctx.fillRect(mx - 3, my, 6, 4);
+        }
+        for (let b = 0; b < (up.barracks || 0); b++) {
+          // bunk tents for the soldiers
+          const bx = x + (b % 2 ? 4.2 : -4.2) * TILE, by = y + (2.4 + Math.floor(b / 2) * 1.6) * TILE;
+          ctx.fillStyle = '#4a5a3a'; ctx.fillRect(bx - 11, by - 8, 22, 11); ctx.fillStyle = '#5a6a4a'; ctx.fillRect(bx - 10, by - 11, 20, 4); ctx.fillStyle = '#3a4a2a'; ctx.fillRect(bx - 11, by + 2, 22, 1);
+          ctx.fillStyle = '#1a1a14'; ctx.fillRect(bx - 3, by - 5, 6, 8); ctx.fillStyle = col; ctx.fillRect(bx - 9, by - 10, 2, 2);
+        }
+        if (up.level) {
+          // fortified: concrete barriers around the flag
+          for (const [dx, dy] of [[-2.4, 1.8], [2.4, 1.8], [-2.4, -1.4], [2.4, -1.4]].slice(0, 2 + up.level * 2)) {
+            const bx = x + dx * TILE, by = y + dy * TILE;
+            ctx.fillStyle = '#8a8698'; ctx.fillRect(bx - 8, by - 6, 16, 6); ctx.fillStyle = '#a8a4b4'; ctx.fillRect(bx - 7, by - 7, 14, 2);
+            for (let i = 0; i < 4; i++) { ctx.fillStyle = i % 2 ? '#ffd23f' : '#1a1622'; ctx.fillRect(bx - 7 + i * 4, by - 4, 3, 2); }
+          }
         }
         if (up.pad) {
           const px = x, py = y + 3 * TILE;
+          ctx.fillStyle = 'rgba(20,30,50,0.7)'; pixCircleFill(px, py, 15, 0.6);
           ctx.globalAlpha = 0.6 + Math.sin(R.time * 4) * 0.3;
-          pixCircle(px, py, 12, '#22e5ff'); pixCircle(px, py, 8, '#22e5ff');
+          pixCircle(px, py, 15, '#22e5ff', 0.6); pixCircle(px, py, 10, '#22e5ff', 0.6); pixCircle(px, py, 5, '#9af0ff', 0.6);
           ctx.globalAlpha = 1;
         }
       }
@@ -797,6 +860,7 @@ export function createRenderer(canvas) {
     const s = drawCharacter(key, e.x, e.y, e.aim, spec, arms, dt, { flash, moving: e.moving, burn: e.burn });
     e._top = s.top;
     if (e.hp < e.maxHp * 0.35) drip(e.x, e.y, dt, spec.special && spec.special !== 'dog');
+    if (e.stunT > 0) for (let i = 0; i < 3; i++) { const a = R.time * 5 + i * 2.1; ctx.fillStyle = i % 2 ? '#ffd23f' : '#9af0ff'; ctx.fillRect(Math.round(e.x + Math.cos(a) * 6), Math.round(e.y - s.top - 4 + Math.sin(a) * 2), 2, 2); }
     if (e.windup > 0 && Math.floor(R.time * 16) % 2) {
       ctx.globalAlpha = 0.5;
       ctx.fillStyle = '#ff3b5c';
@@ -1418,13 +1482,13 @@ export function createRenderer(canvas) {
 
   // hologram labels over the main base buildings (ARSENAL, CLINICA, ARMARIO, COFRE, GARAGEM)
   const labelCache = new Map();
-  const LABEL = { arsenal: 'ARSENAL', clinic: 'CLINICA', locker: 'ARMARIO', vault: 'COFRE', garage: 'GARAGEM', boca: 'BOCA' };
-  const LABEL_ICON = { arsenal: 'star', clinic: 'cross', locker: 'box', vault: 'coin', garage: 'gear', boca: 'coin' };
+  const LABEL = { arsenal: 'ARSENAL', clinic: 'CLINICA', locker: 'ARMARIO', vault: 'COFRE', garage: 'GARAGEM', boca: 'BOCA', king: 'BOCA KING' };
+  const LABEL_ICON = { arsenal: 'star', clinic: 'cross', locker: 'box', vault: 'coin', garage: 'gear', boca: 'coin', king: 'star' };
   function labelCanvas(kind, extra = '') {
     const ck = kind + extra;
     let c = labelCache.get(ck);
     if (c) return c;
-    const col = STATION_COLORS[kind] || '#ffffff';
+    const col = kind === 'king' ? '#ffd23f' : STATION_COLORS[kind] || '#ffffff';
     const t = textSprite(LABEL[kind] + extra, col, null);
     const w = t.width * 2 + 22, h = 16;
     c = mk(w, h);
@@ -1456,6 +1520,18 @@ export function createRenderer(canvas) {
         const c = labelCanvas(st.kind);
         ctx.globalAlpha = (0.55 + 0.35 * night) * (Math.random() < 0.03 ? 0.4 : 1);
         ctx.drawImage(c, Math.round(X - c.width / 2), Math.round(Y - c.height / 2 + Math.sin(R.time * 1.7 + wx) * 1.5));
+      }
+    }
+    // the BOCA KING: a huge golden hologram over the central base
+    if (view.world.kingId >= 0) {
+      const C = view.world.regions[view.world.kingId].compound;
+      const wx = (C.coreX + 0.5) * TILE, wy = (C.coreY - 1) * TILE;
+      if (wx > ox - 200 && wx < ox + R.vw + 200 && wy > oy - 200 && wy < oy + R.vh + 260) {
+        const k = projK(70), c = labelCanvas('king');
+        const X = scx + (wx - scx) * k, Y = scy + (wy - scy) * k + Math.sin(R.time * 1.4) * 2;
+        ctx.globalAlpha = 0.75 + 0.25 * Math.sin(R.time * 3);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(c, Math.round(X - c.width), Math.round(Y - c.height), c.width * 2, c.height * 2);
       }
     }
     // every boca held by a gang shows its sign (with its upgrade level)
@@ -1597,6 +1673,145 @@ export function createRenderer(canvas) {
     }
     ctx.globalAlpha = 1;
     R.stains = keep;
+  }
+
+
+  // ---------------------------------------------------------------- grenades in flight, smoke and fire on the ground
+  R.grenade = (ev) => { R.grenades.push({ ...ev, t: 0 }); };
+  R.grenadeBoom = (ev) => {
+    const G0 = GRENADES[ev.k] || {};
+    R.grenades = R.grenades.filter((g) => g.id !== ev.id);
+    if (ev.k === 'impact' || ev.k === 'sticky') { R.explosion(ev.x, ev.y - 6, ev.k === 'sticky' ? 46 : 54); R.decals.push({ x: ev.x, y: ev.y, r: 14, t: 0, life: 30 }); }
+    else if (ev.k === 'flash') {
+      R.effect({ k: 'ring', x: ev.x, y: ev.y - 4, r: 84, c: '#ffffff', life: 0.35 });
+      R.burst(ev.x, ev.y - 6, ['#ffffff', '#fff8d0'], 30, 140, 0.4, 0, true);
+      R.dynLights.push({ x: ev.x, y: ev.y, r: 260, c: '#ffffff', life: 0.5, t: 0, i: 2.5, boom: true });
+    } else if (ev.k === 'smoke') R.areas.push({ k: 'smoke', x: ev.x, y: ev.y, r: 64, t: 0, life: 8 });
+    else if (ev.k === 'emp') {
+      R.areas.push({ k: 'emp', x: ev.x, y: ev.y, r: 86, t: 0, life: 1 });
+      R.effect({ k: 'ring', x: ev.x, y: ev.y - 4, r: 86, c: '#22e5ff', life: 0.5 });
+      R.burst(ev.x, ev.y - 6, ['#22e5ff', '#9af0ff', '#ffffff'], 28, 120, 0.6, 0, true);
+    } else if (ev.k === 'fire') { R.areas.push({ k: 'fire', x: ev.x, y: ev.y, r: 44, t: 0, life: 6 }); R.burst(ev.x, ev.y - 6, ['#ff3fa4', '#ff8a3d', '#ffd23f'], 24, 90, 0.6, 0, true); }
+    void G0;
+  };
+  function drawGrenades(dt) {
+    const keep = [];
+    for (const g of R.grenades) {
+      g.t += dt;
+      const u = Math.min(1, g.t / g.T);
+      if (g.t > g.T + 2) continue;
+      keep.push(g);
+      const x = g.x + (g.x2 - g.x) * u, y = g.y + 8 + (g.y2 - g.y - 8) * u, z = Math.sin(u * Math.PI) * (12 + Math.hypot(g.x2 - g.x, g.y2 - g.y) * 0.12) + (1 - u) * 8;
+      shadow(x, y, 2, 0.35);
+      const c = (GRENADES[g.k] || {}).c || '#fff';
+      ctx.fillStyle = '#1a1622'; ctx.fillRect(Math.round(x) - 2, Math.round(y - z) - 2, 4, 4);
+      ctx.fillStyle = c; ctx.fillRect(Math.round(x) - 1, Math.round(y - z) - 1, 2, 2);
+      if (u >= 1 && Math.floor(R.time * 8) % 2) { ctx.fillStyle = '#ff3b5c'; ctx.fillRect(Math.round(x), Math.round(y - 3), 1, 1); }
+      if (Math.random() < 0.4) R.particles.push({ x, y: y - z, vx: 0, vy: 0, life: 0.25, t: 0, c, g: 0, sz: 1, em: true });
+    }
+    R.grenades = keep;
+  }
+  function tickAreas(dt) {
+    const keep = [];
+    for (const a of R.areas) {
+      a.t += dt;
+      if (a.t > a.life) continue;
+      keep.push(a);
+      if (a.k === 'smoke') {
+        // a thick, rolling cloud
+        const fade = Math.min(1, (a.life - a.t) / 2);
+        for (let i = 0; i < 5 * fade; i++) {
+          const an = Math.random() * 6.28, d = Math.sqrt(Math.random()) * a.r;
+          R.particles.push({ x: a.x + Math.cos(an) * d, y: a.y + Math.sin(an) * d * 0.7 - 6, vx: (Math.random() - 0.5) * 8, vy: -4 - Math.random() * 6, life: 1.8, t: 0, c: ['#8a8a96', '#a8a8b4', '#6e6e7a'][(Math.random() * 3) | 0], g: 0, sz: 5 + ((Math.random() * 4) | 0), smoke: true, hi: true });
+        }
+      } else if (a.k === 'fire') {
+        ctx.fillStyle = 'rgba(40,10,10,0.4)'; pixCircleFill(a.x, a.y, a.r, 0.6);
+        for (let i = 0; i < 4; i++) {
+          const an = Math.random() * 6.28, d = Math.sqrt(Math.random()) * a.r;
+          R.particles.push({ x: a.x + Math.cos(an) * d, y: a.y + Math.sin(an) * d * 0.6, vx: (Math.random() - 0.5) * 10, vy: -26 - Math.random() * 20, life: 0.5, t: 0, c: ['#ff3fa4', '#ff8a3d', '#ffd23f'][(Math.random() * 3) | 0], g: 0, sz: 2, em: true, fire: Math.random() < 0.3 });
+        }
+      }
+    }
+    R.areas = keep;
+  }
+
+  // ---------------------------------------------------------------- things up high: turrets on the walls, radar towers, helicopters
+  const P3 = (wx, wy, z) => { const k = projK(z); return [R.vw / 2 + (wx - R.ox - R.vw / 2) * k, R.vh / 2 + (wy - R.oy - R.vh / 2) * k]; };
+  function drawRaised(view, raised, ox, oy, dt, night) {
+    const emq = [];
+    // turrets standing on the corners of the compound walls
+    for (const t of raised) {
+      if (t.x < ox - 60 || t.x > ox + R.vw + 60 || t.y < oy - 60 || t.y > oy + R.vh + 80) continue;
+      const [X, Y] = P3(t.x, t.y, 12);
+      ctx.setTransform(1, 0, 0, 1, Math.round(X - t.x), Math.round(Y - t.y));
+      // a concrete pedestal on top of the wall
+      ctx.fillStyle = '#5a5664'; ctx.fillRect(Math.round(t.x - 7), Math.round(t.y - 4), 14, 6); ctx.fillStyle = '#7a7688'; ctx.fillRect(Math.round(t.x - 7), Math.round(t.y - 5), 14, 2);
+      const gc = GANG_COLORS[t.team] || '#ff3b5c';
+      ctx.fillStyle = gc; ctx.fillRect(Math.round(t.x - 7), Math.round(t.y + 1), 14, 1);
+      drawTurret(t, view, emq);
+      for (const q of emq) ctx.drawImage(q.s, q.x, q.y);
+      emq.length = 0;
+      if (!t.dead && t.hp < t.maxHp) hpBar(t.x, t.y - 24, 16, t.hp / t.maxHp, t.hp / t.maxHp > 0.3 ? gc : '#ff3b5c');
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    // radar towers: tall lattice with a turning dish and a blinking light
+    for (const Rg of view.world.regions) {
+      const rs = view.rs[Rg.id];
+      if (!rs || !rs.up || !rs.up.radar) continue;
+      const C = Rg.compound;
+      const wx = (C.coreX - 2.5) * TILE, wy = (C.coreY - 0.1) * TILE;
+      if (wx < ox - 80 || wx > ox + R.vw + 80 || wy < oy - 60 || wy > oy + R.vh + 120) continue;
+      const H = 64, seg = 8;
+      const col = ownerColor(rs.owner);
+      for (let z = 0; z < H; z += seg) {
+        const w0 = 6 * (1 - z / H) + 1.5, w1 = 6 * (1 - (z + seg) / H) + 1.5;
+        const [ax, ay] = P3(wx, wy, z), [bx, by] = P3(wx, wy, z + seg);
+        ctx.fillStyle = '#3a3646';
+        line(ax - w0, ay, bx - w1, by); line(ax + w0, ay, bx + w1, by);
+        ctx.fillStyle = '#5a566a'; line(ax - w0, ay, bx + w1, by); line(ax + w0, ay, bx - w1, by);
+      }
+      const [tx, ty] = P3(wx, wy, H);
+      const sw = Math.round(Math.abs(Math.cos(R.time * 1.6)) * 7) + 1;
+      ctx.fillStyle = '#c8c8d0'; ctx.fillRect(Math.round(tx - sw), Math.round(ty - 4), sw * 2, 4); ctx.fillStyle = '#8a8a96'; ctx.fillRect(Math.round(tx - sw), Math.round(ty - 1), sw * 2, 1);
+      ctx.fillStyle = Math.floor(R.time * 2) % 2 ? '#ff3b5c' : '#4a1a22'; ctx.fillRect(Math.round(tx) - 1, Math.round(ty) - 7, 2, 2);
+      ctx.fillStyle = col; ctx.fillRect(Math.round(tx) - 2, Math.round(ty) + 1, 4, 1);
+    }
+    // police helicopters: way up, rotors spinning, searchlight on the street
+    for (const h of view.helis || []) {
+      if (h.x < ox - 160 || h.x > ox + R.vw + 160 || h.y < oy - 160 || h.y > oy + R.vh + 200) continue;
+      const [X, Y] = P3(h.x, h.y, 90);
+      const a = h.aim || 0, ca = Math.cos(a), sa = Math.sin(a);
+      // searchlight beam
+      const [gx, gy] = [h.x + ca * 46 - ox, h.y + sa * 46 - oy];
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.12 + 0.08 * night;
+      ctx.fillStyle = '#f4f8ff';
+      ctx.beginPath(); ctx.moveTo(X, Y); ctx.lineTo(gx - 16, gy - 8); ctx.lineTo(gx + 16, gy + 8); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha = 0.25 + 0.2 * night; pixCircleFill(gx, gy, 20, 0.6);
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+      ctx.save();
+      ctx.translate(Math.round(X), Math.round(Y));
+      ctx.rotate(a);
+      ctx.scale(1.7, 1.7);
+      ctx.fillStyle = '#141c3a'; ctx.fillRect(-22, -1, 14, 2); ctx.fillRect(-24, -4, 3, 8);
+      ctx.fillStyle = '#1a2448'; ctx.fillRect(-9, -6, 20, 12); ctx.fillRect(-11, -4, 2, 8); ctx.fillRect(11, -4, 3, 8);
+      ctx.fillStyle = '#f2f2f2'; ctx.fillRect(-7, -6, 14, 2);
+      ctx.fillStyle = '#5ab0e8'; ctx.fillRect(7, -4, 5, 8); ctx.fillStyle = '#c8f0ff'; ctx.fillRect(9, -3, 2, 2);
+      if (h.kind === 'rocket') { ctx.fillStyle = '#3a3d48'; ctx.fillRect(-2, -9, 8, 3); ctx.fillRect(-2, 6, 8, 3); ctx.fillStyle = '#ff3b5c'; ctx.fillRect(6, -9, 1, 3); ctx.fillRect(6, 6, 1, 3); }
+      else { ctx.fillStyle = '#56606e'; ctx.fillRect(10, 5, 7, 2); }
+      ctx.fillStyle = Math.floor(R.time * 8) % 2 ? '#ff3b3b' : '#3a5aff'; ctx.fillRect(-3, -1, 3, 2);
+      ctx.restore();
+      // main rotor blur + blades
+      ctx.globalAlpha = 0.25; ctx.fillStyle = '#c8c8d0'; pixCircle(X, Y, 30, '#c8c8d0', 1);
+      ctx.globalAlpha = 0.9; ctx.fillStyle = '#2a2a36';
+      const ra = R.time * 38;
+      for (let k = 0; k < 2; k++) { const b = ra + k * Math.PI / 2; line(X - Math.cos(b) * 31, Y - Math.sin(b) * 31, X + Math.cos(b) * 31, Y + Math.sin(b) * 31); line(X - Math.cos(b) * 31, Y - Math.sin(b) * 31 + 1, X + Math.cos(b) * 31, Y + Math.sin(b) * 31 + 1); }
+      ctx.globalAlpha = 1;
+    }
+  }
+  function line(x0, y0, x1, y1) {
+    const n = Math.max(1, Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0))));
+    for (let i = 0; i <= n; i++) ctx.fillRect(Math.round(x0 + (x1 - x0) * i / n), Math.round(y0 + (y1 - y0) * i / n), 1, 1);
   }
 
   // ---------------------------------------------------------------- downed players: crawling and bleeding

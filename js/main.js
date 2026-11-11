@@ -8,7 +8,8 @@
 
 import {
   TILE, WEAPONS, ABILITIES, randomLook, LOOK_KEYS, LOOK_OPTIONS, GANG_COLORS, NAME_COLORS, VEHICLES, VEHICLE_IDS,
-  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL, BAR_ROOM, ITEMS, WANTED, isMech, DOWN, WITHDRAW,
+  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL, BAR_ROOM, ITEMS, WANTED, isMech, DOWN, WITHDRAW, VERSION,
+  GRENADES, GRENADE_IDS, GREN_RANGE,
 } from './data.js';
 import { randomSeed } from './rng.js';
 import { generateWorld, moveBox, regionAt, rayCast, opaqueAt } from './world.js';
@@ -57,7 +58,7 @@ function slotsMeta() {
   }
   return meta;
 }
-const metaOf = (s) => ({ mode: s.mode || 'pve', map: s.map || { type: 'coastal', size: 'M' }, gangName: s.gangName, owned: s.owned, total: s.total, savedAt: s.savedAt });
+const metaOf = (s) => ({ mode: s.king ? 'king' : s.mode || 'pve', map: s.map || { type: 'coastal', size: 'M' }, gangName: s.gangName, owned: s.owned, total: s.total, savedAt: s.savedAt });
 
 // ------------------------------------------------------------------ app state
 const canvas = document.getElementById('game');
@@ -71,13 +72,13 @@ const app = {
   mode: 'title',            // title | host | client
   world: null, game: null, myId: 'host', roomCode: null, slot: 0, mapOpts: null,
   local: { x: 0, y: 0, aim: 0, dashT: 0, dashX: 0, dashY: 0, moving: false, vx: 0, vy: 0, ix: 0, iy: 0, wx: 0, wy: 0, lastDx: 0, lastDy: 1, bar: -1, bx: 0, by: 0, barT: 0 },
-  menuOpen: false, typing: false, music: null, musicOn: true,
+  menuOpen: false, typing: false, music: null, musicOn: true, grenSel: 'impact',
   titleCam: { t: 0 }, saveT: 0, sendT: 0, snapT: 0, acc: 0, intensityT: 0, trackKey: '',
   chats: new Map(),
 };
 const host = { peer: null, clients: new Map() };
 const client = {
-  peer: null, conn: null, players: new Map(), enemies: new Map(), allies: new Map(), pickups: new Map(), turrets: new Map(), vehicles: new Map(), civs: new Map(), pcars: new Map(), projectiles: [],
+  peer: null, conn: null, players: new Map(), enemies: new Map(), allies: new Map(), pickups: new Map(), turrets: new Map(), vehicles: new Map(), civs: new Map(), pcars: new Map(), helis: new Map(), projectiles: [],
   me: null, prof: null, rg: null, roster: new Map(), day: 0.3, cd: { L: 0, R: 0 }, radar: [], broken: new Set(), mode: 'pve', seed: 0,
 };
 
@@ -136,11 +137,13 @@ function setupTitle() {
 async function startHost(o) {
   ui.status('Building the city...');
   await new Promise((r) => setTimeout(r, 20));
-  const bases = o.mode === 'pvp' ? MAP_SIZES[o.size].bases : 1;
-  const world = o.world && o.world.seed === o.seed ? o.world : generateWorld(o.seed, { type: o.type, size: o.size, bases });
-  const game = G.createGame(world, { mode: o.mode, gangIdx: o.gangIdx, gangName: o.gangName });
+  const king = o.mode === 'king';
+  const mode = king ? 'pvp' : o.mode;
+  const bases = mode === 'pvp' ? MAP_SIZES[o.size].bases : 1;
+  const world = o.world && o.world.seed === o.seed ? o.world : generateWorld(o.seed, { type: o.type, size: o.size, bases, king });
+  const game = G.createGame(world, { mode, gangIdx: o.gangIdx, gangName: o.gangName, king, kingTime: o.kingTime });
   app.slot = o.slot;
-  beginHosting(world, game, { type: o.type, size: o.size, bases }, o.gangIdx);
+  beginHosting(world, game, { type: o.type, size: o.size, bases, king: king || undefined }, o.gangIdx);
 }
 
 async function loadSlot(i) {
@@ -151,10 +154,10 @@ async function loadSlot(i) {
   const mode = s.mode || 'pve';
   const map = s.map || { type: 'coastal', size: 'M' };
   const bases = mode === 'pvp' ? MAP_SIZES[map.size].bases : 1;
-  const world = generateWorld(s.seed, { type: map.type, size: map.size, bases });
-  const game = G.createGame(world, { mode, save: s });
+  const world = generateWorld(s.seed, { type: map.type, size: map.size, bases, king: !!map.king });
+  const game = G.createGame(world, { mode, save: s, king: !!s.king, kingTime: (s.kingGoal || 600) / 60 });
   app.slot = i;
-  beginHosting(world, game, { type: map.type, size: map.size, bases }, null);
+  beginHosting(world, game, { type: map.type, size: map.size, bases, king: map.king || undefined }, null);
 }
 
 async function beginHosting(world, game, mapOpts, gangIdx) {
@@ -173,7 +176,7 @@ async function beginHosting(world, game, mapOpts, gangIdx) {
   join(game.mode === 'pvp' ? gangIdx ?? undefined : undefined);
   game.events = game.events.filter((e) => e.t === 'msg' && e.to === 'host');
   const main = [...game.gangs.values()][0];
-  ui.log(game.mode === 'pvp' ? '<b>Gang war!</b> Friends pick their gang color when they join. Take rival bases or 60% of the city.' : `Welcome to <b>${escapeHtml(main ? main.name : '')}</b>. Take the city, one district at a time.`, 'gold');
+  ui.log(game.king ? `<b>REI DA BOCA!</b> Fight your way to the BOCA KING in the middle of the city and hold it for ${Math.round(game.kingGoal / 60)} minutes in total to win. The factions want it too.` : game.mode === 'pvp' ? '<b>Gang war!</b> Friends pick their gang color when they join. Take rival bases or 60% of the city.' : `Welcome to <b>${escapeHtml(main ? main.name : '')}</b>. Take the city, one district at a time.`, 'gold');
   ui.log('Kill the garrison of a nearby district, then stand on its core. Press <b>V</b> near a flying vehicle to drive it.', 'info');
   // open the online room
   const code = makeCode();
@@ -212,7 +215,7 @@ function onClientMsg(id, msg) {
   if (!c || !game || !msg) return;
   c.last = performance.now() / 1000;
   if (msg.t === 'hello') {
-    if (msg.proto !== PROTOCOL) { send(c.conn, { t: 'err', text: 'Game version mismatch — refresh the page (Ctrl+F5).' }); return; }
+    if (msg.proto !== PROTOCOL || msg.ver !== VERSION) { send(c.conn, { t: 'err', text: `Version mismatch: the host runs v${VERSION}, you run v${msg.ver || '?'}. Refresh the page (Ctrl+F5) so you both have the same version.` }); return; }
     let key = String(msg.key || id).slice(0, 60);
     const name = String(msg.name || 'Mano').slice(0, 14);
     const now = performance.now() / 1000;
@@ -318,7 +321,7 @@ async function startJoin(raw) {
     client.peer = peer; client.conn = conn;
     conn.on('data', receiver(onHostMsg));
     conn.on('close', () => { if (app.mode === 'client' || client.conn === conn) hostLost('The host closed the game.'); });
-    send(conn, { t: 'hello', proto: PROTOCOL, name: prefs.name || 'Mano', look: prefs.look, key: playerKey, color: prefs.color, gangName: prefs.gangName || undefined });
+    send(conn, { t: 'hello', proto: PROTOCOL, ver: VERSION, name: prefs.name || 'Mano', look: prefs.look, key: playerKey, color: prefs.color, gangName: prefs.gangName || undefined });
     app.roomCode = code;
     ui.status('Joining...');
   } catch (err) {
@@ -337,7 +340,7 @@ function cleanupClient() {
   try { client.conn && client.conn.close(); } catch { /* ignore */ }
   try { client.peer && client.peer.destroy(); } catch { /* ignore */ }
   client.peer = null; client.conn = null;
-  for (const m of [client.players, client.enemies, client.allies, client.pickups, client.turrets, client.vehicles, client.civs, client.pcars]) m.clear();
+  for (const m of [client.players, client.enemies, client.allies, client.pickups, client.turrets, client.vehicles, client.civs, client.pcars, client.helis]) m.clear();
   client.projectiles = [];
   client.me = null; client.prof = null; client.rg = null;
 }
@@ -383,10 +386,11 @@ function unpackRegions(rg) {
         owner: G.ownerFromCode(a[0]), garrison: a[1], garrisonMax: a[2], capture: a[3] / 100, guards: a[4], hqUnlocked: !!(a[5] & 1), bossDefeated: !!(a[5] & 2),
         capBy: a[6] === 99 ? 'raid' : a[6] >= 0 ? G.ownerFromCode(a[6]) : null,
       };
-      if (a[7]) { r.up = { level: a[7][0], walls: a[7][1], barracks: a[7][2], medic: a[7][3], pad: a[7][4], radar: a[7][5], boca: a[7][6] || 0 }; r.slots = a[8].map((x) => (x ? { type: TURRET_IDS[x[0]], mk: x[1] } : null)); }
+      if (a[7]) { r.up = { level: a[7][0], walls: a[7][1], barracks: a[7][2], medic: a[7][3], pad: a[7][4], radar: a[7][5], boca: a[7][6] || 0 }; r.slots = a[8].map((x) => (x ? { type: TURRET_IDS[x[0]], mk: x[1], hpf: (x[2] ?? 100) / 100 } : null)); r.extra = a[9] || 0; }
       return r;
     }),
-    raids: rg.raids.map((a) => ({ target: a[0], f: a[1], state: a[2] ? 'active' : 'warn', t: a[3], g: a[4], size: a[5] })),
+    raids: rg.raids.map((a) => ({ target: a[0], f: a[1], state: a[2] ? 'active' : 'warn', t: a[3], g: a[4] >= 0 ? a[4] : null, size: a[5], kind: a[6] ?? -1 })).filter((r) => r.kind < 0),
+    squads: rg.raids.filter((a) => a[6] >= 0 && a[6] < 10).map((a) => ({ target: a[0], by: a[6], t: a[3], size: a[5] })), king: rg.king || null,
     gangs: rg.gangs, def: rg.def, win: rg.win, broken: new Set(rg.br || []),
   };
 }
@@ -423,7 +427,7 @@ function applySnapshot(s) {
     o.faction = Math.floor(r[1] / 10); const t = r[1] % 10; o.boss = t === 6; o.tier = o.boss ? 5 : t;
     o.tx = r[2]; o.ty = r[3]; o.hp = r[4]; o.maxHp = r[5];
     o.windup = r[6] & 1; o.flash = r[6] & 2 ? 0.1 : 0; o.raid = !!(r[6] & 4); o.moving = !!(r[6] & 8); o.burn = !!(r[6] & 16);
-    o.stars = r[7]; o.aim = r[8]; o.atk = G.ATTACK_KEYS[r[9]];
+    o.stars = r[7]; o.aim = r[8]; o.atk = G.ATTACK_KEYS[r[9]]; o.stunT = r[6] & 32 ? 1 : 0;
   });
   syncMap(client.allies, s.A, (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => {
     o.tx = r[1]; o.ty = r[2]; o.hp = r[3]; o.maxHp = r[4]; o.flash = r[5] & 2 ? 0.1 : 0; o.moving = !!(r[5] & 8); o.aim = r[6];
@@ -434,13 +438,14 @@ function applySnapshot(s) {
   });
   syncMap(client.vehicles, s.V || [], (r) => ({ id: r[0], x: r[2], y: r[3] }), (o, r) => {
     o.type = VEHICLE_IDS[r[1]]; o.tx = r[2]; o.ty = r[3]; o.hp = r[4]; o.maxHp = r[5]; o.charge = r[6]; o.dir = r[7];
-    o.flying = !!(r[8] & 1); o.flash = !!(r[8] & 2); o.charging = !!(r[8] & 4); o.team = r[9]; o.seats = r.slice(10).map((x) => x || null);
+    o.flying = !!(r[8] & 1); o.flash = !!(r[8] & 2); o.charging = !!(r[8] & 4); o.civ = r[8] & 8 ? 1 : 0; o.team = r[9]; o.seats = r.slice(10).map((x) => x || null);
   });
   syncMap(client.civs, s.C || [], (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => {
     o.tx = r[1]; o.ty = r[2]; o.seed = r[3]; o.flee = !!(r[4] & 1); o.flash = !!(r[4] & 2); o.moving = !!(r[4] & 4); o.aim = r[5]; o.hpPct = r[6];
   });
   syncMap(client.pickups, s.K, (r) => ({ id: r[0] }), (o, r) => { o.type = r[1] ? 'heal' : 'cash'; o.x = r[2]; o.y = r[3]; });
   syncMap(client.pcars, s.PC || [], (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => { o.tx = r[1]; o.ty = r[2]; o.dir = r[3]; o.state = r[4]; });
+  syncMap(client.helis, s.HE || [], (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => { o.tx = r[1]; o.ty = r[2]; o.aim = r[3]; o.kind = r[4] ? 'rocket' : 'mg'; o.atk = !!r[5]; });
   if (client.me.veh && client.me.veh !== prevVeh) { const v = client.vehicles.get(client.me.veh); if (v) { app.local.x = v.tx; app.local.y = v.ty; app.local.vx = app.local.vy = 0; } }
   if (s.ev) for (const ev of s.ev) handleEvent(ev);
 }
@@ -449,7 +454,7 @@ function clientTick(dt) {
   // interpolate others
   const k = Math.min(1, dt * 14);
   for (const o of client.players.values()) if (o.tbx !== undefined && o.bx !== undefined) { o.bx += (o.tbx - o.bx) * k; o.by += (o.tby - o.by) * k; }
-  for (const m of [client.players, client.enemies, client.allies, client.vehicles, client.civs, client.pcars]) for (const o of m.values()) {
+  for (const m of [client.players, client.enemies, client.allies, client.vehicles, client.civs, client.pcars, client.helis]) for (const o of m.values()) {
     if (o.tx === undefined) continue;
     if (Math.abs(o.tx - o.x) > 160 || Math.abs(o.ty - o.y) > 160) { o.x = o.tx; o.y = o.ty; }
     o.x += (o.tx - o.x) * k; o.y += (o.ty - o.y) * k;
@@ -535,6 +540,10 @@ function predictFire(slot, wid) {
     client.projectiles.push({ x: ox, y: oy, vx: Math.cos(a) * Wp.speed, vy: Math.sin(a) * Wp.speed, life: Wp.life, kind: 'rocket', local: true });
     renderer.recoil(key, slot);
     sfx('rocket');
+  } else if (Wp.kind === 'chain') {
+    renderer.recoil(key, slot);
+    renderer.light(ox, oy, 70, '#9af0ff', 0.08, 1.4);
+    sfx('zap');
   } else if (Wp.kind === 'beam') {
     const len = rayCast(app.world, ox, oy, a, Wp.range);
     renderer.effect({ k: 'beam', x: ox, y: oy, x2: ox + Math.cos(a) * len, y2: oy + Math.sin(a) * len, c: '#22e5ff', life: 0.22 });
@@ -754,8 +763,34 @@ function handleEvent(ev) {
       sfx('lost'); ui.alert(`We lost <b>${escapeHtml(app.world.regions[ev.r].name)}</b> to ${factionName(ev.f)}!`, 'raid'); ui.log(`${factionName(ev.f)} retook <b>${escapeHtml(app.world.regions[ev.r].name)}</b>.`, 'bad');
       break;
     case 'raid': sfx('alarm'); ui.alert(`⚠ ${factionName(ev.f)} will raid <b>${escapeHtml(app.world.regions[ev.r].name)}</b> in ${ev.eta}s! (${ev.n} raiders)`, 'raid', 7000); ui.log(`Raid incoming on <b>${escapeHtml(app.world.regions[ev.r].name)}</b> (${factionName(ev.f)}). Defend the core!`, 'bad'); break;
-    case 'raidgo': ui.alert(`⚠ The raid on <b>${escapeHtml(app.world.regions[ev.r].name)}</b> has begun!`, 'raid'); break;
-    case 'raidend': ui.toast(ev.retreat ? 'The raiders retreated.' : `Raid on ${escapeHtml(app.world.regions[ev.r].name)} defeated!`, 'good'); if (!ev.retreat) ui.log('Raid defeated! Bonus to the vault.', 'good'); break;
+    case 'gthrow': renderer.grenade(ev); sfx('whip', ev.x, ev.y, 0.5); break;
+    case 'gstick': renderer.burst(ev.x, ev.y - 8, ['#3ddc84', '#ffffff'], 6, 30, 0.3, 0, true); sfx('click', ev.x, ev.y); break;
+    case 'gboom': renderer.grenadeBoom(ev); sfx(ev.k === 'impact' || ev.k === 'sticky' ? 'boom' : ev.k === 'emp' ? 'zapboom' : ev.k === 'flash' ? 'beam' : 'flame', ev.x, ev.y); if ((ev.k === 'impact' || ev.k === 'sticky') && near(ev.x, ev.y, 260)) renderer.addShake(7); if (ev.k === 'flash' && near(ev.x, ev.y, 200)) renderer.screenFlash('#ffffff', 0.25); break;
+    case 'flashed': if (ev.id === app.myId) { renderer.screenFlash('#ffffff', 1.4); sfx('beam'); } break;
+    case 'heli': if (ev.id === app.myId) { sfx('siren'); ui.alert(`<b>POLICE HELICOPTER</b> ${ev.k === 'rocket' ? 'with rockets' : 'with a machine gun'}! It can't be shot down — get to cover or lose them.`, 'raid', 5000); } break;
+    case 'steal': sfx('venter', ev.x, ev.y); renderer.burst(ev.x, ev.y, ['#ffffff', '#c8c0d8'], 8, 50, 0.4); if (ev.id === app.myId) ui.toast('Car stolen! The driver ran off screaming.', 'warn'); break;
+    case 'tdown': if (ev.g === myGangId()) { sfx('lost', ev.x, ev.y); ui.log(`A turret was destroyed at <b>${escapeHtml(app.world.regions[ev.r].name)}</b>. Buy a new one in the compound menu.`, 'bad'); } break;
+    case 'fraid': if (near(corePos(ev.r).x, corePos(ev.r).y, 900)) ui.log(`${factionName(ev.f)} is attacking ${factionName(ev.d)} at <b>${escapeHtml(app.world.regions[ev.r].name)}</b>.`, 'info'); break;
+    case 'fcap':
+      renderer.capture(ev.r, ev.pf, ev.f);
+      ui.log(`${factionName(ev.f)} took <b>${escapeHtml(app.world.regions[ev.r].name)}</b> from ${factionName(ev.pf)}.`, 'info');
+      break;
+    case 'squad':
+      if (ev.g === myGangId()) { sfx('alarm', undefined, undefined, 0.5); ui.alert(`<b>${escapeHtml(ev.by)}</b> sent a squad of ${ev.n} against <b>${escapeHtml(app.world.regions[ev.r].name)}</b>!`, 'good', 5000); }
+      else if (ev.f === myGangId()) { sfx('alarm'); ui.alert(`⚠ A rival squad is attacking <b>${escapeHtml(app.world.regions[ev.r].name)}</b>!`, 'raid', 6000); }
+      break;
+    case 'king': {
+      const o = ev.o;
+      const who = typeof o === 'string' ? gangLabel(o) : factionName(o);
+      sfx(o === myGangId() ? 'capture' : 'alarm');
+      ui.alert(`${who} holds the <b>BOCA KING</b>!${o === myGangId() ? ' Hold it to win.' : ''}`, o === myGangId() ? 'good' : 'raid', 6000);
+      break;
+    }
+    case 'raidgo': if (ev.kind) break; ui.alert(`⚠ The raid on <b>${escapeHtml(app.world.regions[ev.r].name)}</b> has begun!`, 'raid'); break;
+    case 'raidend':
+      if (ev.kind === 'g') { if (ev.g === myGangId()) { if (ev.win) { sfx('capture'); ui.alert(`Your squad took <b>${escapeHtml(app.world.regions[ev.r].name)}</b>!`, 'good'); } else ui.alert(`Your squad at <b>${escapeHtml(app.world.regions[ev.r].name)}</b> ${ev.retreat ? 'gave up and went home' : 'was wiped out'}.`, 'raid'); } break; }
+      if (ev.kind === 'f') break;
+      ui.toast(ev.retreat ? 'The raiders retreated.' : `Raid on ${escapeHtml(app.world.regions[ev.r].name)} defeated!`, 'good'); if (!ev.retreat) ui.log('Raid defeated! Bonus to the vault.', 'good'); break;
     case 'hq': sfx('alarm'); ui.alert(`${factionName(ev.f)} HQ is now open: <b>${escapeHtml(app.world.regions[ev.r].name)}</b>`, 'warn', 7000); ui.log(`You weakened ${factionName(ev.f)} enough — their HQ <b>${escapeHtml(app.world.regions[ev.r].name)}</b> can be attacked.`, 'warn'); break;
     case 'boss': sfx('boss'); ui.alert(`<b>${escapeHtml(ev.name)}</b> appears!`, 'raid', 5000); break;
     case 'bossdown': sfx('capture'); ui.alert(`The boss of ${factionName(ev.f)} has fallen! Capture the HQ!`, 'good', 6000); break;
@@ -765,8 +800,10 @@ function handleEvent(ev) {
     case 'win': {
       const mineWin = ev.g === myGangId();
       sfx(mineWin ? 'levelup' : 'lost');
-      const name = gangName(ev.g);
-      const text = currentMode() === 'pvp'
+      const name = ev.f !== undefined ? FACTIONS[ev.f].name : gangName(ev.g);
+      const text = ev.why === 'king'
+        ? (mineWin ? `${name} held the BOCA KING long enough. You are the REI DA BOCA!` : `${name} held the BOCA KING long enough and won the city.`)
+        : currentMode() === 'pvp'
         ? (mineWin ? `${name} rules the city${ev.why === 'share' ? ' (60% of the districts)' : ' — every rival gang is gone'}!` : `${name} won the gang war${ev.why === 'share' ? ' by holding 60% of the city' : ''}.`)
         : `All three faction HQs have fallen. ${name} runs the city now.`;
       setTimeout(() => ui.showVictory({ mine: mineWin, text, stats: app.mode === 'host' ? app.game.stats : null }), 1500);
@@ -852,6 +889,7 @@ function handleEvent(ev) {
   }
 }
 
+function corePos(r) { const C = app.world.regions[r].compound; return { x: (C.coreX + 0.5) * TILE, y: (C.coreY + 0.5) * TILE }; }
 function factionName(f) { return ['<span style="color:#c9c05a">Milícia</span>', '<span style="color:#3ad0ff">NeoBrás</span>', '<span style="color:#a66bff">Comando Cromo</span>'][f] || 'Enemies'; }
 function gangsList() { return app.mode === 'host' ? [...app.game.gangs.values()].map((g) => ({ idx: g.idx, name: g.name })) : client.rg ? client.rg.gangs : []; }
 function gangName(id) { const i = G.gangIdx(id); const g = gangsList().find((x) => x.idx === i); return g ? g.name : GANG_DEFAULT_NAMES[i] || 'A gang'; }
@@ -1010,6 +1048,8 @@ function gameFrame(dt, now) {
     else if (code === 'KeyV') { if (!(me && me.bar >= 0)) sendAction({ t: 'veh' }); }
     else if (code === 'Digit1' || code === 'Digit2' || code === 'Digit3' || code === 'Numpad1' || code === 'Numpad2' || code === 'Numpad3') useBelt(Number(code.slice(-1)) - 1);
     else if (code === 'KeyT') { if (me && !me.dead && !me.veh && !(me.emo > 0)) sendAction({ t: 'emote' }); }
+    else if (code === 'KeyZ') throwGrenade();
+    else if (code === 'KeyC') cycleGrenade();
     else if (code === 'KeyG') { sendAction({ t: 'recruit' }); }
     else if (code === 'KeyQ' || code === 'Space' || code === 'ShiftLeft' || code === 'ShiftRight') useAbility('Q');
     else if (code === 'KeyX' && me && me.down) { sendAction({ t: 'giveup' }); }
@@ -1148,9 +1188,11 @@ function gameFrame(dt, now) {
   ui.update({
     me, prof, myName: prefs.name || 'Mano', myColor: prefs.color,
     vault: myGangObj.vault, up: myGangObj.up || {}, gangs, mode: view.mode, myGang: myG,
+    squads: isHost ? app.game.raids.filter((r) => r.kind === 'g').map((r) => ({ target: r.target })) : client.rg.squads,
     rs: view.rs, raids: view.raids.map((r) => ({ target: r.target, f: r.f, state: r.state === 'warn' ? 0 : 1, t: Math.max(0, Math.round(r.t)), g: r.g })),
     gangName: myGangObj.name, gangColor: GANG_COLORS[myG], regionId: rid,
-    blood: renderer.bloodOn,
+    blood: renderer.bloodOn, grenSel: app.grenSel,
+    king: isHost ? (st.king ? { r: world.kingId, goal: st.kingGoal, hold: Object.entries(st.kingHold).map(([k, v]) => [k, Math.floor(v)]) } : null) : client.rg.king,
     inBase: inBaseLocal(), nearCompound: nearOwnCompound(), nearVehicle, civPrompt: L.bar >= 0 ? 0 : view.civPrompt, quality: renderer.quality, ctxHint: contextHint(),
     barName: L.bar >= 0 ? world.bars[L.bar].name : '',
     roomCode: app.roomCode, isHost, playerCount: view.players.length, players, enemiesNear, radar: isHost ? st.radar[myGangId()] || [] : client.radar,
@@ -1192,6 +1234,28 @@ function moveInRoom(L, dx, dy) {
   if (!hit(L.bx, L.by + dy)) L.by += dy;
   L.by = Math.min(BAR_ROOM.h + 4, L.by);
 }
+// ------------------------------------------------------------------ grenades (Z throws at the cursor, C switches type)
+function cycleGrenade() {
+  const me = myPrivate();
+  const have = GRENADE_IDS.filter((k) => me && me.gren && me.gren[k] > 0);
+  if (!have.length) { ui.toast('No grenades. Buy them at the Arsenal (QG).', 'warn'); sfx('error'); return; }
+  const i = have.indexOf(app.grenSel);
+  app.grenSel = have[(i + 1) % have.length];
+  sfx('click');
+  ui.toast(`Grenade: <b>${GRENADES[app.grenSel].name}</b> (${me.gren[app.grenSel]})`, 'good');
+}
+function throwGrenade() {
+  const me = myPrivate();
+  if (!me || me.dead || me.down || app.local.bar >= 0) return;
+  if (!me.gren || !(me.gren[app.grenSel] > 0)) {
+    const k = GRENADE_IDS.find((x) => me.gren && me.gren[x] > 0);
+    if (!k) { ui.toast('No grenades. Buy them at the Arsenal (QG).', 'warn'); sfx('error'); return; }
+    app.grenSel = k;
+  }
+  const mw = renderer.screenToWorld(input.mouse.x, input.mouse.y);
+  sendAction({ t: 'throw', k: app.grenSel, x: Math.round(mw.x), y: Math.round(mw.y) });
+}
+
 // a downed gang-mate close enough to revive
 function downedMateNear() {
   const L = app.local, myG = myGangIdx();
@@ -1286,7 +1350,7 @@ function buildView() {
   const isHost = app.mode === 'host';
   const L = app.local;
   const chatOf = (id) => { const c = app.chats.get(id); return c && c.t > renderer.time ? c : null; };
-  let players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, rs, raids, dayT, broken, mode, waypointsSrc, pcars;
+  let players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, rs, raids, dayT, broken, mode, waypointsSrc, pcars, helis;
   const myG = myGangIdx();
   if (isHost) {
     const g = app.game;
@@ -1302,13 +1366,14 @@ function buildView() {
     enemies = [...g.enemies.values()].map((e) => ({ ...e, burn: e.burnT > 0 }));
     allies = [...g.allies.values()].filter((a) => !a.hidden).map((a) => ({ id: a.id, x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp, flash: a.flash, moving: a.moving, aim: a.aim, team: G.gangIdx(a.team), follow: a.follow, tier: a.tier, civ: a.civ, melee: a.melee, lvl: a.lvl || 1, rev: a.revT > 0 }));
     turrets = [...g.turrets.values()].map((t) => ({ id: t.id, x: t.x, y: t.y, aim: t.aim, hp: t.hp, maxHp: t.maxHp, type: t.type, mk: t.mk, team: G.gangIdx(t.team), dead: t.deadT > 0, flash: t.flash > 0 }));
-    vehicles = [...g.vehicles.values()].map((v) => ({ id: v.id, type: v.type, x: v.x, y: v.y, hp: v.hp, maxHp: v.maxHp, charge: v.charge, dir: v.dir, flying: v.flying, flash: v.flash > 0, charging: v.charging, team: G.gangIdx(v.team), seats: v.seats }));
+    vehicles = [...g.vehicles.values()].map((v) => ({ id: v.id, type: v.type, x: v.x, y: v.y, hp: v.hp, maxHp: v.maxHp, charge: v.charge, dir: v.dir, flying: v.flying, flash: v.flash > 0, charging: v.charging, team: G.gangIdx(v.team), seats: v.seats, civ: v.civ ? 1 : 0 }));
     pickups = [...g.pickups.values()]; projectiles = g.projectiles;
     civs = [...g.civs.values()].map((c) => ({ id: c.id, x: c.x, y: c.y, seed: c.seed, flee: c.flee > 0, flash: c.flash > 0, moving: c.moving, aim: c.aim, hpPct: Math.round(100 * c.hp / c.maxHp) }));
-    rs = g.rs; raids = g.raids.map((r) => ({ ...r, g: G.gangIdx(r.gang) })); dayT = g.dayT;
+    rs = g.rs; raids = g.raids.filter((r) => !r.kind).map((r) => ({ ...r, g: G.gangIdx(r.gang) })); dayT = g.dayT;
     broken = new Set([...g.brk.entries()].filter(([, s]) => s.deadT > 0).map(([k]) => k));
     waypointsSrc = [...g.players.values()].map((p) => ({ name: p.name, color: p.color, wp: p.wp, g: G.gangIdx(p.gang), me: p.id === 'host' }));
     pcars = [...g.pcars.values()].map((c) => ({ x: c.x, y: c.y, dir: c.dir, state: c.state === 'in' ? 0 : c.state === 'drop' ? 1 : 2 }));
+    helis = [...g.helis.values()].map((h) => ({ x: h.x, y: h.y, aim: h.aim, kind: h.kind, atk: h.state === 'atk' }));
   } else {
     mode = client.mode;
     players = [];
@@ -1328,7 +1393,7 @@ function buildView() {
     turrets = [...client.turrets.values()]; vehicles = [...client.vehicles.values()]; civs = [...client.civs.values()];
     rs = client.rg.rs; raids = client.rg.raids; dayT = client.day; broken = client.rg.broken;
     waypointsSrc = [...client.roster.values()].map((r) => ({ name: r.name, color: r.color, wp: r.wp, g: r.g, me: r.id === app.myId }));
-    pcars = [...client.pcars.values()];
+    pcars = [...client.pcars.values()]; helis = [...client.helis.values()];
   }
   // my own vehicle follows my local prediction when I drive
   const me0 = myPrivate();
@@ -1352,7 +1417,7 @@ function buildView() {
     interior = { bar, me: { x: L.bx, y: L.by }, players: inside, prompt };
   }
   const prof = myProfile();
-  return { world: app.world, me: meP, meMoving: L.moving, players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, civPrompt, rs, raids, gangColor: GANG_COLORS[myG], myGang: myG, mode, dayT, broken, waypoints, pcars, interior, sway: !!(prof && prof.sway) };
+  return { world: app.world, me: meP, meMoving: L.moving, players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, civPrompt, rs, raids, gangColor: GANG_COLORS[myG], myGang: myG, mode, dayT, broken, waypoints, pcars, helis, interior, sway: !!(prof && prof.sway) };
 }
 
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }

@@ -9,6 +9,9 @@ Runs in the browser. No install, no server: one player hosts and friends join wi
 
 ---
 
+**Version 0.6** — the version is shown on the title screen. Everyone in a room must run the same version
+(the host refuses friends on another version; refresh with Ctrl+F5). Fixes before a GitHub sync are 0.61, 0.62...
+
 ## How to play
 
 ### Start a game
@@ -46,6 +49,8 @@ Next time, the host loads the game from the title screen and friends rejoin as t
 | **B** | Base menu (at your QG — stand at a building's door to open that shop), compound upgrades (near the core of a district you own), or the bar counter / dealer |
 | **E** | At a bar door: go inside |
 | **1 / 2 / 3** | Use the drink or stim in that belt slot |
+| **Z** | Throw a grenade at the cursor |
+| **C** | Switch grenade type |
 | **T** | Dance (passinho, crip walk or rebolado — you can't move or shoot until it ends) |
 | **TAB** | Territory map: click to place your waypoint, click a district to see / upgrade it |
 | **Enter** | Chat |
@@ -53,6 +58,29 @@ Next time, the host loads the game from the title screen and friends rejoin as t
 | **X** | While downed: give up (respawn at the QG) |
 | **ESC** | Menu: invite link, volume, graphics quality, blood on/off, save, quit |
 | **M** | Music on/off |
+
+### Game modes
+- **PvE · Campaign** — your crew against the three NPC factions. A faction is out only when it holds **no district at
+  all** (taking its HQ is not enough). Win when all three are out.
+- **PvP · Gang War** — one gang per color, each with its own base. Take rival bases or hold 60% of the city.
+- **Rei da Boca** — king of the hill. Every gang starts at the edge of the city; the **BOCA KING** fortress is in the
+  middle. Hold it for the chosen time in total (5, 10, 15 or 20 minutes, set by the host) to win. The timer pauses while
+  someone else holds it. NPC factions fight for it too — if one of them holds it long enough, they win.
+
+### The NPC factions
+They earn money from their districts and spend it on their compounds (turrets, walls, barracks, radar). They raid each
+other's districts, not only yours. When a district changes hands, **its upgrades and turrets stay** — take a fortified
+compound and it's yours, fortifications included.
+
+### Sending raids
+On the **TAB** map, click an enemy district that touches your turf and choose **Small, Medium or Large**. It costs
+soldiers from your compounds plus vault money. The squad marches from your nearest district, hunts the garrison and
+takes the core if it wins — while you fight somewhere else. One raid per player every 3 minutes.
+
+### Soldiers
+Recruit locals (**G**) in your own turf when your crew is full and they join the local compound as soldiers
+(+3 per compound, +2 per Barracks level, +6 at the main base). At a compound you can take a soldier along as crew
+(compound menu). Guards patrol their compound.
 
 ### The game loop (PvE)
 1. **Leave the QG** and go to a district that **borders your turf** (check the minimap or the TAB map).
@@ -107,7 +135,13 @@ transformers and cars are great for that.
 - **Dying** sends you back to the QG and costs **25% of your cash** (gone for good) plus **40% of your progress**
   toward the next level (you never drop a level). Revive your friends!
 - **Enemies level up after 4 kills** (players, guards, crew, turrets): they grow into the next, bigger tier and get a ★.
-- **Police give no XP.** Killing cops while you have 3 or more wanted stars costs you XP.
+- **Police give no XP.** Killing cops while you have 3 or more wanted stars costs you XP. Your crew doesn't learn
+  from cops or civilians either, and their kill money goes to the gang vault.
+
+### Grenades
+Buy them at the **Arsenal** (up to 3 of each), throw with **Z** at the cursor, switch with **C**:
+impact (blows on contact), sticky (sticks to an enemy, then blows), flash (stuns everyone around), smoke (enemies can't
+see through it), EMP (fries drones, mechs and turrets, drains vehicles), incendiary (burning ground).
 
 ### The base (QG)
 Your QG is an occupied favela block: low brick walls with several alley entrances, a little town of brick houses,
@@ -127,6 +161,12 @@ and the cops wait outside. (During a raid on the QG the safe zone switches off �
   Guard Training, More Recruits, Business Network (income), Bounty Board (+cash per kill),
   Black Market (cheaper shops), Informants (earlier raid warnings), Rescue Squad (faster respawn).
 - **DEFESA** puts turrets and upgrades on the base itself.
+- Every upgrade shows: turrets stand on the **corners of the walls** (they shoot inside and outside), Armored Walls go
+  from brick to concrete, steel and chrome, the Radar is a tall tower, the Medic Post a tent, Barracks put up bunk
+  tents (and more soldiers), Fortify adds concrete barriers, the Charge Pad glows.
+- Turrets take a lot of damage but can be **destroyed for good** (buy a new one). Damaged turrets can be repaired
+  from the compound menu.
+- Inside your QG walls nobody can shoot — **unless enemies are in or near the base**, then you can defend it.
 - **Pay off the police**: if you have wanted stars, the base menu lets you pay R$350 per star to clear them.
 
 ### Boca de fumo
@@ -157,6 +197,9 @@ Smaller districts are **gang outposts**: little favela shacks in the corners, bu
 - Three ways out: **beat the response** (kill every cop that came — stars go to zero), **lose them** (stay far from every cop
   until the escape bar fills), or **pay them off** at your QG. Stars also fade slowly when nobody is chasing you.
   Hiding in a bar or at the QG freezes your stars — the cops wait outside.
+- Police are tough. At **4 stars** a helicopter with a machine gun comes; at **5 stars**, one with rockets too. They
+  can't be shot down: they circle you, open fire for a while, leave, and come back if you're still wanted.
+- Civilians fly their cars over the city. Press **V** next to one to steal it (a crime if anyone sees it).
 
 ### Bars, drinks and stims
 - Bars are marked by a neon cocktail sign and a lit doorway. Press **E** at the door (or walk into it) to go inside:
@@ -213,6 +256,7 @@ Vehicles are parked around the city (they show on the minimap and map). Press **
 | Smart SMG | self-guiding bullets |
 | Rocket Arm | explosive rockets |
 | Rail Arm | instant piercing beam |
+| Chain Lightning | a bolt that jumps from enemy to enemy (up to 5), stuns drones |
 
 ### The city
 - **Explosive props**: red barrels, gas cylinders (*botijões*), transformers and parked cars blow up when shot,

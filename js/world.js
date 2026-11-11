@@ -3,7 +3,7 @@
 // opts: { type: coastal|island|lakes|river|archipelago, size: S|M|L, bases: number of gang base sites }
 
 import { makeRng, fbm, hash2 } from './rng.js';
-import { TILE, FACTIONS, NAME_PARTS, MAP_SIZES, MAP_TYPES, PVP_BASE_NAMES, BRANDS } from './data.js';
+import { TILE, FACTIONS, NAME_PARTS, MAP_SIZES, MAP_TYPES, PVP_BASE_NAMES, BRANDS , PERSPECTIVE } from './data.js';
 
 export const T = {
   WATER: 0, SAND: 1, GRASS: 2, DIRT: 3, ROAD: 4, SIDEWALK: 5, CALCADAO: 6, CONCRETE: 7,
@@ -12,7 +12,7 @@ export const T = {
 export const SOLID = new Uint8Array(16);
 SOLID[T.WATER] = SOLID[T.BUILD] = SOLID[T.WALL] = SOLID[T.TREE] = 1;
 export const OPAQUE = new Uint8Array(16);           // blocks bullets and sight
-OPAQUE[T.BUILD] = OPAQUE[T.WALL] = OPAQUE[T.TREE] = 1;
+OPAQUE[T.BUILD] = OPAQUE[T.TREE] = 1;            // compound walls are low brick walls: you shoot over them
 
 const GROUND = { base: T.CONCRETE, beach: T.GRASS, favela: T.DIRT, downtown: T.CONCRETE, suburb: T.GRASS, industrial: T.METAL, jungle: T.GRASS };
 
@@ -236,6 +236,17 @@ export function generateWorld(seed, opts = {}) {
   }
   const baseId = bases[0];
   for (const b of bases) regions[b].base = true;
+  // Rei da Boca: the roomy district closest to the middle of the city is the BOCA KING
+  let kingId = -1;
+  if (opts.king) {
+    let bd = Infinity;
+    for (const R of regions) {
+      if (R.base || R.tiles < 500) continue;
+      const d = Math.hypot(R.cx - mx, R.cy - my) - (R.deep || 0) * 2;
+      if (d < bd) { bd = d; kingId = R.id; }
+    }
+    if (kingId >= 0) regions[kingId].king = true;
+  }
   for (const R of regions) R.tier = -1;
   const q = [];
   for (const b of bases) { regions[b].tier = 0; q.push(b); }
@@ -244,6 +255,7 @@ export function generateWorld(seed, opts = {}) {
     for (const n of regions[r].neighbors) if (regions[n].tier < 0) { regions[n].tier = regions[r].tier + 1; q.push(n); }
   }
   for (const R of regions) if (R.tier < 0) R.tier = 1;
+  if (kingId >= 0) { let mt = 1; for (const R of regions) mt = Math.max(mt, R.tier); regions[kingId].tier = mt + 1; }
 
   const offset = rng.range(0, Math.PI * 2);
   const center = nBases === 1 ? regions[baseId] : { cx: mx, cy: my };
@@ -260,6 +272,7 @@ export function generateWorld(seed, opts = {}) {
     let best = -1, bs = -1;
     for (const id of factionRegions[f]) {
       const R = regions[id];
+      if (R.king) continue;
       const s = R.tier * 1000 + Math.hypot(R.cx - center.cx, R.cy - center.cy) + R.tiles * 0.01;
       if (s > bs) { bs = s; best = id; }
     }
@@ -276,6 +289,7 @@ export function generateWorld(seed, opts = {}) {
     else if (elev > 0.6) R.biome = rng.chance(0.75) ? 'favela' : 'jungle';
     else R.biome = rng.weighted(FACTIONS[R.faction].biomes);
     if (R.base) { R.name = PVP_BASE_NAMES[bases.indexOf(R.id)] || 'QG'; continue; }
+    if (R.king) { R.name = 'BOCA KING'; continue; }
     const parts = NAME_PARTS[R.biome];
     let name = '';
     for (let t = 0; t < 30; t++) {
@@ -357,7 +371,7 @@ export function generateWorld(seed, opts = {}) {
   const compoundBuildings = [];
   for (const R of regions) {
     let w = 13, h = 11;
-    if (R.base) { w = 31; h = 23; } else if (R.hq) { w = 17; h = 13; }
+    if (R.base) { w = 31; h = 23; } else if (R.king) { w = 25; h = 19; } else if (R.hq) { w = 17; h = 13; }
     let placed = false;
     const tryAt = (cx, cy) => {
       const x0 = cx - (w >> 1), y0 = cy - (h >> 1);
@@ -487,7 +501,9 @@ export function generateWorld(seed, opts = {}) {
     // turret slots around the core
     let dx = Math.max(1, Math.min(4, (C.w >> 1) - 2)), dy = Math.max(1, Math.min(3, (C.h >> 1) - 2));
     if (!R.base && C.w >= 13) { dx = 3; dy = 2; }
-    C.slots = [[-dx, -dy], [dx, -dy], [-dx, dy], [dx, dy]].map(([ox, oy]) => ({ x: (C.coreX + ox + 0.5) * TILE, y: (C.coreY + oy + 0.5) * TILE }));
+    void dx; void dy;
+    // turrets stand on the four corners of the wall, so they cover inside and outside the compound
+    C.slots = [[C.x, C.y], [C.x + C.w - 1, C.y], [C.x, C.y + C.h - 1], [C.x + C.w - 1, C.y + C.h - 1]].map(([x, y]) => ({ x: (x + 0.5) * TILE, y: (y + 0.5) * TILE, wall: true }));
     // wall segments (for the 3D compound walls)
     C.walls = [];
     const run = (horiz, fixed, a0, a1) => {
@@ -610,7 +626,7 @@ export function generateWorld(seed, opts = {}) {
 
   // ---------------------------------------------------------------- connectivity
   const world = {
-    seed, type, size: sizeKey, W, H, tiles, region, regions, buildings, coast, baseId, bases, factionRegions, hqs,
+    seed, type, size: sizeKey, W, H, tiles, region, regions, buildings, coast, baseId, bases, factionRegions, hqs, kingId,
     props: [], lights: [], propGrid: null, lightGrid: null, reach: null, spawnTiles: null, roadTiles: null, bars,
     breakables: [], breakGrid: null, wires: [], wireGrid: null, smokers: [], holos: [], hangouts: [],
   };
@@ -941,7 +957,7 @@ function buildProps(world) {
   // building heights (floors), signs, billboards, holograms, chimneys
   for (const b of world.buildings) {
     const h = hash2(b.x, b.y, ps + 1), h2 = hash2(b.x, b.y, ps + 2), h3 = hash2(b.x, b.y, ps + 3), h4 = hash2(b.x, b.y, ps + 4);
-    b.floors = buildingFloors(b, h4);
+    b.floors = b.style === 'cwall' ? 1 : Math.max(1, Math.min(13, Math.round(buildingFloors(b, h4) * PERSPECTIVE.heightMul)));
     b.H = b.style === 'container' ? 9 : b.floors * FLOOR_PX + 4;
     const brandOf = (cats, hh) => { const list = BRANDS.map((B, i) => [B, i]).filter(([B]) => cats.includes(B.cat)); return list[(hh * 9973 | 0) % list.length][1]; };
     const sx = (b.x + b.w / 2) * TILE, sy = (b.y + b.h) * TILE + 5;          // street in front of the south facade
@@ -971,6 +987,16 @@ function buildProps(world) {
     }
     // lit windows spill a little warm light at the foot of the building at night
     if (b.style !== 'container' && b.style !== 'ruin' && h < 0.55) lights.push({ x: sx, y: sy, r: 22 + b.w * 3, c: b.style === 'tower' ? '#9ab8ff' : '#ffcf7a', night: true });
+    // big buildings full of windows wash the street around them in colored light at night
+    if ((b.style === 'tower' || b.style === 'apartment' || b.style === 'hq' || b.style === 'brick' || b.style === 'favela') && b.floors >= 3) {
+      const SPILL = ['#ffb86a', '#9ab8ff', '#ff7ad8', '#7affd8', '#ffd88a', '#c89aff', '#ff9a6a'];
+      const n = b.floors >= 6 ? 3 : 2;
+      const spots = [[sx, sy + 2], [b.x * TILE - 6, (b.y + b.h / 2) * TILE], [(b.x + b.w) * TILE + 6, (b.y + b.h / 2) * TILE], [sx, b.y * TILE - 6]];
+      for (let k = 0; k < n; k++) {
+        const [lx, ly] = spots[(k + ((h3 * 4) | 0)) % 4];
+        lights.push({ x: lx, y: ly, r: 46 + Math.min(70, b.floors * 7) + b.w * 2, c: SPILL[((h2 * 97 + k * 3) | 0) % SPILL.length], night: true, spill: true });
+      }
+    }
     if (b.style === 'factory' || (b.style === 'warehouse' && h3 < 0.25)) world.smokers.push({ x: b.x * TILE + 8 + ((h2 * (b.w - 1)) | 0) * TILE, y: (b.y + 1) * TILE, z: b.H, k: 'smoke' });
     if (b.style === 'club') lights.push({ x: sx, y: sy + 4, r: 64, c: '#ff3fa4', c2: '#22e5ff', anim: 'strobe', seed: h * 100 });
   }

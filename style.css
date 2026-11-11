@@ -378,3 +378,25 @@ input { font-family: var(--head); }
 .bar.revbar .fill { background: linear-gradient(#5dff9a, #2ab86a); }
 #death-sub { font-family: var(--head); font-size: 13px; color: #ffd0d8; margin-top: 8px; }
 #death-sub b { color: var(--yellow); font-weight: 400; }
+
+.version { display: inline-block; margin-left: 10px; padding: 2px 8px; background: #12081f; border: 2px solid var(--cyan); color: var(--cyan); font-size: 12px; letter-spacing: 1px; text-shadow: none; }
+
+/* ------------------------------------------------------------ v0.6 */
+.pouch { display: flex; align-items: flex-end; gap: 4px; }
+.gsel { position: relative; width: 40px; height: 40px; background: var(--panel); border: 2px solid var(--line); box-shadow: 0 0 0 2px #05030c; display: flex; align-items: center; justify-content: center; }
+.gsel i { width: 14px; height: 16px; border-radius: 6px 6px 4px 4px; box-shadow: inset -3px -3px 0 rgba(0,0,0,.35), 0 0 8px currentColor; }
+.gsel b { position: absolute; right: 3px; bottom: 1px; font-family: var(--head); font-size: 11px; font-weight: 400; color: #fff; text-shadow: 1px 1px 0 #000; }
+.gsel .key { position: absolute; left: 2px; top: 0; font-family: var(--head); font-size: 9px; color: var(--yellow); }
+.gall { display: flex; flex-direction: column; font-family: var(--head); font-size: 9px; line-height: 10px; }
+.king-box { border: 2px solid var(--yellow); background: rgba(255,210,63,.08); padding: 4px 6px; margin-bottom: 6px; }
+.king-title { font-family: var(--head); font-size: 10px; color: var(--yellow); text-shadow: 0 0 8px rgba(255,210,63,.6); }
+.squad-box { margin-top: 8px; border-top: 2px dashed var(--line); padding-top: 6px; }
+.squad-box b { font-family: var(--head); font-size: 11px; color: var(--pink); font-weight: 400; }
+.squad-btns { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.squad-btns .btn { text-align: left; line-height: 13px; }
+.soldier-box { background: rgba(34,229,255,.07); border: 2px solid #1e5a6a; padding: 6px 10px; margin-bottom: 8px; font-size: 18px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.soldier-box b { font-family: var(--head); font-size: 12px; color: var(--cyan); font-weight: 400; }
+.soldier-box .btn { margin-left: auto; }
+.bar.thp { height: 8px; margin: 4px 0; }
+.gcards { margin-bottom: 14px; }
+.gdot { display: inline-block; width: 8px; height: 10px; margin-right: 5px; border-radius: 4px 4px 2px 2px; vertical-align: -1px; }

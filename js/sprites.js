@@ -454,6 +454,7 @@ export function armSprite(kind, armColor = '#aeb9c9') {
     case 'rail': forearm(4); P(4, m - 2, 16, 2, '#3a3d48'); P(4, m + 1, 16, 2, '#3a3d48'); for (let i = 0; i < 4; i++) P(6 + i * 4, m - 1, 2, 2, '#22e5ff'); P(20, m - 2, 1, 5, '#9af0ff'); break;
     case 'flamer': forearm(5); P(5, m - 2, 6, 5, '#6a3a2a'); P(5, m - 2, 6, 1, '#8a5a3a'); P(11, m - 1, 5, 2, '#3a3d48'); P(16, m - 1, 2, 2, '#ff8a3d'); P(6, m + 2, 3, 1, '#ffd23f'); break;
     case 'claw': forearm(6); P(6, m - 2, 2, 1, '#e8f6ff'); P(6, m, 3, 1, '#e8f6ff'); P(6, m + 2, 2, 1, '#e8f6ff'); break;
+    case 'chain': forearm(5); P(5, m - 2, 5, 5, '#3a3d48'); P(10, m - 3, 2, 7, '#56606e'); P(12, m - 2, 2, 5, '#9af0ff'); P(14, m - 1, 2, 3, '#e8f6ff'); P(16, m, 2, 1, '#9af0ff'); P(6, m - 1, 3, 1, '#22e5ff'); break;
     default: forearm(6);
   }
   outline(c);

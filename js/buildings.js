@@ -6,12 +6,12 @@
 // base × ambient color (with a fixed per-side shade, so the box reads as 3D) + lit windows + neon at full brightness.
 // Baked results are cached and only rebuilt when the light level or the window pattern changes.
 
-import { TILE, BRANDS } from './data.js';
+import { TILE, BRANDS, PERSPECTIVE } from './data.js';
 import { mk, shade, drawLogo } from './sprites.js';
 import { textSprite } from './font.js';
 import { hash2 } from './rng.js';
 
-export const CAM_Z = 560;                  // camera height (px). Smaller = stronger perspective
+export const CAM_Z = PERSPECTIVE.camZ;     // camera height (px). Smaller = stronger perspective
 export const projK = (z) => CAM_Z / (CAM_Z - Math.min(z, CAM_Z * 0.7));
 
 // Neon animation state, shared by signs (baked in 2 states) and their lights.
@@ -169,6 +169,18 @@ function paintWall(b, side, len, rnd, tint = '#ff3f8e') {
   // ---- favela-fortress styles (gang turf): exposed brick, neon in the owner's color, cables, tags
   const KCOL = { arsenal: '#ff3f8e', clinic: '#3ddc84', locker: '#22e5ff', vault: '#ffd23f', garage: '#ff8a3d', boca: '#7dff5a' };
   const KNAME = { arsenal: 'ARSENAL', clinic: 'CLINICA', locker: 'ARMARIO', vault: 'COFRE', garage: 'GARAGEM', boca: 'BOCA' };
+  if (st === 'cwall' && (b.wl || 0) > 0) {
+    // armored walls: 1 concrete + rebar, 2 steel plates, 3 chrome
+    const wl = b.wl;
+    if (wl === 1) { P(0, 0, len, H, '#7a7680'); speckle(P, rnd, 0, 0, len, H, len, ['#6a6670', '#8a8690', '#5a5660']); for (let x = 0; x < len; x += 12) P(x, 0, 1, H, '#5a5660'); for (let x = 3; x < len; x += 8) P(x, 0, 1, 3, '#4a2a20'); brickFill(S, rnd, 0, H - 5, len, 5, '#a8543a'); }
+    else if (wl === 2) { P(0, 0, len, H, '#4a5260'); for (let x = 0; x < len; x += 10) { P(x, 0, 1, H, '#2e343e'); P(x + 1, 0, 1, H, '#6a7484'); P(x + 3, 2, 1, 1, '#9aa4b4'); P(x + 3, H - 4, 1, 1, '#9aa4b4'); } for (let x = 0; x < len; x += 6) P(x, H - 3, 3, 2, x % 12 ? '#141018' : '#ffd23f'); }
+    else { for (let y = 0; y < H; y++) P(0, y, len, 1, shade('#b8c8d8', 0.25 - y / H * 0.6)); for (let x = (rnd() * 9) | 0; x < len; x += 9 + ((rnd() * 7) | 0)) P(x, 0, 1, H, 'rgba(255,255,255,0.55)'); S.E(0, H - 4, len, 1, tint); }
+    P(0, 0, len, 2, wl === 3 ? '#e8f4ff' : '#9a96a8'); P(0, 2, len, 1, '#2a2636');
+    for (let x = 0; x < len; x += 13) { const w = 10 + ((rnd() * 3) | 0); S.E(x, 3, Math.min(w, len - x), 1, tint); }
+    if (wl < 3 && rnd() < 0.6) pixacao(S, rnd, 2 + ((rnd() * Math.max(1, len - 26)) | 0), H - 6, 24, rnd() < 0.5 ? tint : null);
+    groundLine(S);
+    return S;
+  }
   if (st === 'cwall') {
     // low brick wall with a concrete cap, a neon tube in the owner's color, tags and a few broken bricks
     brickFill(S, rnd, 0, 0, len, H, pick(['#a8543a', '#9a4a34', '#b05a3e']));
@@ -479,8 +491,8 @@ function paintRoof(b, rnd, tint = '#ff3f8e') {
   const antenna = (x, y) => { P(x, y, 1, 1, '#c8c8d0'); P(x - 1, y + 1, 3, 1, '#56606e'); S.blinks.push({ x, y }); };
   S.blinks = [];
   if (st === 'cwall') {
-    // top of the brick wall: cap stones, the neon tube, broken glass set in the cement
-    P(0, 0, W, D, '#b8ac98');
+    // top of the wall: cap stones (or steel / chrome with armored walls), the neon tube, broken glass in the cement
+    P(0, 0, W, D, ['#b8ac98', '#8a8690', '#5a6270', '#c8d8e8'][b.wl || 0]);
     speckle(P, rnd, 0, 0, W, D, W * D / 6, ['#a89c88', '#c8bca8', '#8a7e6c']);
     P(0, 0, W, 1, '#d8ccb8'); P(0, D - 1, W, 1, '#6a5e4c');
     const along = W > D;
@@ -706,9 +718,10 @@ function paintRoof(b, rnd, tint = '#ff3f8e') {
 
 // ------------------------------------------------------------------ art + bake
 export function buildingArt(b, tint = null) {
-  if (tint) {
+  const ak = tint ? tint + (b.style === 'cwall' ? ':' + (b.wl || 0) : '') : null;
+  if (ak) {
     b._arts = b._arts || {};
-    if (b._arts[tint]) return (b._art = b._arts[tint]);
+    if (b._arts[ak]) return (b._art = b._arts[ak]);
   } else if (b._art) return b._art;
   const rnd = rngOf(b.seed);
   const W = b.w * TILE, D = b.h * TILE;
@@ -722,7 +735,7 @@ export function buildingArt(b, tint = null) {
   const anim = b.sign ? b.sign.anim : b.board ? b.board.anim : 'steady';
   const litMul = { hq: 1.4, bar: 1.2, shack: 0.9, cwall: 0, garage: 0.6, boca: 1.3, brick: 1.0, tower: 1.25, apartment: 1.1, shop: 0.9, favela: 0.9, house: 0.8, club: 0.4, church: 0.6, warehouse: 0.35, factory: 0.5, kiosk: 0.6, ruin: 0, container: 0 }[b.style] ?? 0.8;
   const art = { W, D, H: b.H, k: projK(b.H), walls, roof, anim: b.style === 'bar' ? 'swap' : anim, seed: (b.seed % 1000) / 10, litMul, bakeKey: '', baked: null };
-  if (tint) b._arts[tint] = art;
+  if (ak) b._arts[ak] = art;
   b._art = art;
   return art;
 }

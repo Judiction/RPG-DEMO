@@ -2,11 +2,12 @@
 // base menu, compound upgrades, map with waypoints, gang picker (PvP), settings.
 
 import {
-  GAME_NAME, WEAPONS, WEAPON_IDS, MODS, MOD_IDS, ABILITIES, VAULT_UPGRADES, FACTIONS, LOOK_OPTIONS, LOOK_KEYS,
+  GAME_NAME, VERSION, KING_TIMES, WEAPONS, WEAPON_IDS, MODS, MOD_IDS, ABILITIES, VAULT_UPGRADES, FACTIONS, LOOK_OPTIONS, LOOK_KEYS,
   GANG_COLORS, GANG_COLOR_NAMES, GANG_DEFAULT_NAMES, NAME_COLORS, BIOME_LABEL, MAX_WEAPON_LVL, weaponMult, weaponUpgradePrice,
   TILE, randomLook, MAP_TYPES, MAP_TYPE_IDS, MAP_SIZES, VEHICLES, VEHICLE_IDS, BATTERY_PRICE, TURRETS, TURRET_IDS,
   TURRET_MAX_MK, turretMult, turretUpgradePrice, COMPOUND_UPS, COMPOUND_UP_IDS, PVP_WIN_SHARE, FOLLOWER_MAX,
   DRINKS, STIMS, ITEMS, BELT_SIZE, WANTED, BAD_BATCH, BOCA, WITHDRAW, DOWN,
+  GRENADES, GRENADE_IDS, GREN_MAX, SQUADS, EXTRA_SOLDIERS, TURRET_REPAIR_K,
 } from './data.js';
 import { T, generateWorld, mapImageData } from './world.js';
 import { charSprite, armSprite, playerSpec, mk, turretHead, vehicleSprite } from './sprites.js';
@@ -34,7 +35,7 @@ export function createUI(root, cb) {
   <div id="title" class="screen">
     <div class="title-wrap">
       <h1 class="logo" data-text="${GAME_NAME}">${GAME_NAME}</h1>
-      <div class="tagline">Guerra de território · Brazilian cyberpunk turf RPG</div>
+      <div class="tagline">Guerra de território · Brazilian cyberpunk turf RPG <span class="version">v${VERSION}</span></div>
       <div class="title-grid">
         <div class="panel creator">
           <div class="panel-title">YOUR CHARACTER</div>
@@ -87,7 +88,7 @@ export function createUI(root, cb) {
     </div>
     <div class="hud-bottom">
       <div class="veh-panel panel slim hidden" id="veh"></div>
-      <div class="belt-row"><div class="buffs" id="buffs"></div><div class="belt" id="belt"></div></div>
+      <div class="belt-row"><div class="buffs" id="buffs"></div><div class="belt" id="belt"></div><div class="pouch" id="pouch"></div></div>
       <div class="hotbar" id="hotbar"></div>
       <div class="hint" id="hint"></div>
     </div>
@@ -186,7 +187,7 @@ export function createUI(root, cb) {
     box.classList.toggle('hidden', !used.length);
     $('#saves').innerHTML = slots.map((s, i) => !s ? '' : `
       <div class="save-row">
-        <button class="btn save-load" data-load="${i}"><span class="sl-mode ${s.mode}">${s.mode === 'pvp' ? 'PVP' : 'PVE'}</span> ${esc(s.gangName || 'Gang')}</button>
+        <button class="btn save-load" data-load="${i}"><span class="sl-mode ${s.mode}">${s.mode === 'king' ? 'REI' : s.mode === 'pvp' ? 'PVP' : 'PVE'}</span> ${esc(s.gangName || 'Gang')}</button>
         <div class="save-meta">${esc(MAP_TYPES[s.map?.type]?.name || 'Coastal')} ${esc(s.map?.size || 'M')} · turf ${s.owned}/${s.total} · ${new Date(s.savedAt).toLocaleDateString()} ${new Date(s.savedAt).toLocaleTimeString().slice(0, 5)}</div>
         <button class="btn tiny danger" data-del="${i}" title="Delete this save">✕</button>
       </div>`).join('');
@@ -202,7 +203,7 @@ export function createUI(root, cb) {
   });
 
   // ---------------------------------------------------------------- new game setup + map preview
-  const ng = { mode: 'pve', type: 'coastal', size: 'M', seed: randomSeed(), gangIdx: Math.max(0, GANG_COLORS.indexOf(prefs.gangColor)), slot: 0, world: null, genT: null };
+  const ng = { mode: 'pve', kingTime: 10, type: 'coastal', size: 'M', seed: randomSeed(), gangIdx: Math.max(0, GANG_COLORS.indexOf(prefs.gangColor)), slot: 0, world: null, genT: null };
   function openNewGame() {
     const slots = U.slots || [];
     let free = slots.findIndex((s) => !s);
@@ -212,8 +213,9 @@ export function createUI(root, cb) {
       <div class="ng-body">
         <div class="ng-left">
           <div class="ng-row"><span class="ng-label">MODE</span>
-            <div class="seg" id="ng-mode"><button data-v="pve">PVE · CAMPAIGN</button><button data-v="pvp">PVP · GANG WAR</button></div></div>
+            <div class="seg" id="ng-mode"><button data-v="pve">PVE · CAMPAIGN</button><button data-v="pvp">PVP · GANG WAR</button><button data-v="king">REI DA BOCA</button></div></div>
           <div class="ng-desc" id="ng-mode-desc"></div>
+          <div class="ng-row" id="ng-king-row"><span class="ng-label">HOLD TIME</span><div class="seg" id="ng-king">${KING_TIMES.map((m) => `<button data-v="${m}">${m} MIN</button>`).join('')}</div></div>
           <div class="ng-row"><span class="ng-label">MAP</span><div class="seg wrap" id="ng-type">${MAP_TYPE_IDS.map((t) => `<button data-v="${t}">${MAP_TYPES[t].name.toUpperCase()}</button>`).join('')}</div></div>
           <div class="ng-desc" id="ng-type-desc"></div>
           <div class="ng-row"><span class="ng-label">SIZE</span><div class="seg" id="ng-size">${Object.keys(MAP_SIZES).map((s) => `<button data-v="${s}">${MAP_SIZES[s].name.toUpperCase()}</button>`).join('')}</div></div>
@@ -230,8 +232,11 @@ export function createUI(root, cb) {
   }
   function refreshNG(regen) {
     const set = (id, v) => $('#' + id).querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === String(v)));
-    set('ng-mode', ng.mode); set('ng-type', ng.type); set('ng-size', ng.size); set('ng-slot', ng.slot);
-    $('#ng-mode-desc').textContent = ng.mode === 'pve'
+    set('ng-mode', ng.mode); set('ng-type', ng.type); set('ng-size', ng.size); set('ng-slot', ng.slot); set('ng-king', ng.kingTime);
+    $('#ng-king-row').style.display = ng.mode === 'king' ? '' : 'none';
+    $('#ng-mode-desc').textContent = ng.mode === 'king'
+      ? `King of the hill: every gang starts at the edge of the city. Conquer your way to the BOCA KING in the middle and hold it for ${ng.kingTime} minutes in total (the timer pauses while someone else has it). The NPC factions can win too!`
+      : ng.mode === 'pve'
       ? 'Everyone is in one gang. Take the city from the three factions and beat their bosses.'
       : `Gang war: players pick a gang color when they join. Each gang starts at its own base. Capture rival bases or hold ${Math.round(PVP_WIN_SHARE * 100)}% of the city to win. Up to ${MAP_SIZES[ng.size].bases} gangs on this size.`;
     $('#ng-type-desc').textContent = MAP_TYPES[ng.type].desc;
@@ -243,7 +248,7 @@ export function createUI(root, cb) {
       clearTimeout(ng.genT);
       ng.genT = setTimeout(() => {
         const t0 = performance.now();
-        ng.world = generateWorld(ng.seed, { type: ng.type, size: ng.size, bases: ng.mode === 'pvp' ? MAP_SIZES[ng.size].bases : 1 });
+        ng.world = generateWorld(ng.seed, { type: ng.type, size: ng.size, bases: ng.mode !== 'pve' ? MAP_SIZES[ng.size].bases : 1, king: ng.mode === 'king' });
         ng.world._ms = performance.now() - t0;
         drawPreview();
       }, 30);
@@ -253,11 +258,11 @@ export function createUI(root, cb) {
     const c = $('#ng-map');
     if (!c || !ng.world) return;
     const w = ng.world;
-    drawWorldMap(c, w, (R) => (R.base ? (ng.mode === 'pve' ? GANG_COLORS[ng.gangIdx] : '#ffffff') : FACTIONS[R.faction].color), { bases: true, mode: ng.mode, gangColor: GANG_COLORS[ng.gangIdx] });
+    drawWorldMap(c, w, (R) => (R.base ? (ng.mode === 'pve' ? GANG_COLORS[ng.gangIdx] : '#ffffff') : R.king ? '#ffd23f' : FACTIONS[R.faction].color), { bases: true, mode: ng.mode === 'king' ? 'pvp' : ng.mode, gangColor: GANG_COLORS[ng.gangIdx] });
     const n = w.regions.length;
     const bi = {};
     for (const R of w.regions) bi[R.biome] = (bi[R.biome] || 0) + 1;
-    $('#ng-info').innerHTML = `${n} districts · ${w.W}×${w.H} tiles · ${Object.entries(bi).filter(([k]) => k !== 'base').map(([k, v]) => `${v} ${BIOME_LABEL[k].toLowerCase()}`).join(', ')}${ng.mode === 'pvp' ? ` · ${w.bases.length} gang bases (white)` : ''}`;
+    $('#ng-info').innerHTML = `${n} districts · ${w.W}×${w.H} tiles · ${Object.entries(bi).filter(([k]) => k !== 'base').map(([k, v]) => `${v} ${BIOME_LABEL[k].toLowerCase()}`).join(', ')}${ng.mode !== 'pve' ? ` · ${w.bases.length} gang bases (white)` : ''}${ng.mode === 'king' ? ' · BOCA KING (gold)' : ''}`;
   }
   $('#modal').addEventListener('click', (e) => {
     if (U.open !== 'newgame') return;
@@ -265,6 +270,7 @@ export function createUI(root, cb) {
     if (b) {
       const seg = b.parentElement.id, v = b.dataset.v;
       if (seg === 'ng-mode') { ng.mode = v; refreshNG(true); }
+      if (seg === 'ng-king') { ng.kingTime = Number(v); refreshNG(false); }
       if (seg === 'ng-type') { ng.type = v; refreshNG(true); }
       if (seg === 'ng-size') { ng.size = v; refreshNG(true); }
       if (seg === 'ng-slot') { ng.slot = Number(v); refreshNG(false); }
@@ -275,7 +281,7 @@ export function createUI(root, cb) {
     if (e.target.id === 'ng-start') {
       if (!ng.world) return;
       readName();
-      cb.onHost({ mode: ng.mode, type: ng.type, size: ng.size, seed: ng.seed, gangIdx: ng.gangIdx, gangName: prefs.gangName || GANG_DEFAULT_NAMES[ng.gangIdx], slot: ng.slot, world: ng.world });
+      cb.onHost({ mode: ng.mode, kingTime: ng.kingTime, type: ng.type, size: ng.size, seed: ng.seed, gangIdx: ng.gangIdx, gangName: prefs.gangName || GANG_DEFAULT_NAMES[ng.gangIdx], slot: ng.slot, world: ng.world });
     }
   });
   $('#modal').addEventListener('change', (e) => {
@@ -508,6 +514,13 @@ export function createUI(root, cb) {
       bh += id ? `<div class="bslot" title="${esc(ITEMS[id].name)}: ${esc(ITEMS[id].desc)}" style="border-color:${ITEMS[id].c}"><img src="${itemIcon(id)}"><span class="key">${i + 1}</span></div>` : `<div class="bslot empty"><span class="key">${i + 1}</span></div>`;
     }
     const be = $('#belt'); if (be._h !== bh) { be.innerHTML = bh; be._h = bh; }
+    // grenade pouch: the selected type big, the others small
+    const gr = me.gren || {};
+    const sel = GRENADES[s.grenSel] && gr[s.grenSel] > 0 ? s.grenSel : GRENADE_IDS.find((k) => gr[k] > 0) || s.grenSel;
+    let ph = `<div class="gsel" style="border-color:${GRENADES[sel].c}" title="Z: throw ${esc(GRENADES[sel].name)} · C: switch"><i style="background:${GRENADES[sel].c}"></i><span class="key">Z</span><b>${gr[sel] || 0}</b></div><div class="gall">`;
+    for (const k of GRENADE_IDS) if (gr[k] > 0 && k !== sel) ph += `<span style="color:${GRENADES[k].c}">${GRENADES[k].name[0]}${gr[k]}</span>`;
+    ph += '</div>';
+    const pe = $('#pouch'); if (pe._h !== ph) { pe.innerHTML = ph; pe._h = ph; }
     let fh = '';
     for (const [id, t] of me.buffs || []) { const I = ITEMS[id]; if (I) fh += `<div class="buff" style="border-color:${I.c}" title="${esc(I.name)}: ${esc(I.desc)}"><img src="${itemIcon(id)}"><span>${fmtT(t)}</span></div>`; }
     if (me.poison > 0) fh += `<div class="buff poison" title="Bad batch: losing HP (never below 1). Água de Coco cures it."><span class="pz">☠</span><span>${Math.ceil(me.poison)}s</span></div>`;
@@ -609,9 +622,24 @@ export function createUI(root, cb) {
     const total = U.world.regions.length;
     const my = 'g' + s.myGang;
     let html = '';
+    if (s.king) {
+      // Rei da Boca: who holds the BOCA KING, and everyone's time
+      const K = s.king, kr = s.rs[K.r];
+      const holder = kr ? kr.owner : null;
+      const nameOf = (o) => (isGang(o) ? (s.gangs.find((g) => g.idx === gIdx(o)) || {}).name || 'Gang' : FACTIONS[o] ? FACTIONS[o].short : '?');
+      const colOf = (o) => ownerColor(o);
+      const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+      html += `<div class="king-box"><div class="king-title">👑 BOCA KING · ${fmt(K.goal)}</div><div class="turf-row"><small>Held by</small> <b style="color:${colOf(holder)}">${esc(nameOf(holder))}</b></div>`;
+      const hold = K.hold.slice().sort((a, b) => b[1] - a[1]).slice(0, 4);
+      for (const [k, t] of hold) {
+        const o = k[0] === 'g' ? k : Number(k);
+        html += `<div class="turf-row"><span style="color:${colOf(o)}">${esc(nameOf(o))}</span><span>${fmt(t)}</span></div><div class="bar cap"><div class="fill" style="width:${Math.min(100, 100 * t / K.goal).toFixed(1)}%;background:${colOf(o)}"></div></div>`;
+      }
+      html += '</div>';
+    }
     if (s.mode === 'pvp') {
       const gangs = s.gangs.slice().sort((a, b) => b.owned - a.owned);
-      html += `<div class="turf-row"><small>WIN: ${Math.ceil(total * PVP_WIN_SHARE)} districts or last gang</small></div>`;
+      if (!s.king) html += `<div class="turf-row"><small>WIN: ${Math.ceil(total * PVP_WIN_SHARE)} districts or last gang</small></div>`;
       for (const g of gangs) html += `<div class="turf-row"><b style="color:${GANG_COLORS[g.idx]}">${g.idx === s.myGang ? '▶ ' : ''}${esc(g.name)}</b> <span>${g.out ? '<span class="bad">OUT</span>' : `${g.owned}/${total}`}</span></div>`;
     } else {
       const owned = s.rs.filter((r) => r.owner === my).length;
@@ -641,10 +669,10 @@ export function createUI(root, cb) {
     for (let f = 0; f < 3; f++) {
       const list = U.world.factionRegions[f];
       if (!list.length) continue;
-      const held = list.filter((r) => isGang(s.rs[r].owner)).length;
+      const owned = s.rs.filter((r) => r.owner === f).length;
       const hq = U.world.hqs[f];
-      const st = s.defeated[f] ? '<span class="good">DEFEATED</span>' : s.mode === 'pvp' ? (hq >= 0 ? 'boss at HQ' : '') : s.rs[hq] && s.rs[hq].hqUnlocked ? '<span class="warn">HQ OPEN</span>' : `HQ at ${Math.ceil(list.filter((r) => r !== hq).length / 2)}`;
-      html += `<div class="turf-row f"><span style="color:${FACTIONS[f].color}">${FACTIONS[f].short}</span> <span>${held}/${list.length}</span> <small>${st}</small></div>`;
+      const st = s.defeated[f] ? '<span class="good">OUT</span>' : s.rs[hq] && s.rs[hq].owner === f && !s.rs[hq].hqUnlocked && s.mode !== 'pvp' ? `HQ at ${Math.ceil(list.filter((r) => r !== hq).length / 2)}` : 'districts';
+      html += `<div class="turf-row f"><span style="color:${FACTIONS[f].color}">${FACTIONS[f].short}</span> <span>${owned}</span> <small>${st}</small></div>`;
     }
     for (const r of s.raids) {
       if (s.mode === 'pvp' && r.g !== s.myGang) continue;
@@ -838,6 +866,22 @@ export function createUI(root, cb) {
     drawBigMap();
     renderMapSel();
   };
+  // raid buttons for a district you could attack (from the map)
+  function squadBox(s, r) {
+    const R = U.world.regions[r], rs = s.rs[r];
+    if (!R.neighbors.some((n) => s.rs[n].owner === 'g' + s.myGang)) return '<br><small>Not touching your turf: no squads.</small>';
+    if (s.mode === 'pve' && rs.owner === 3) return '';
+    let soldiers = 0;
+    for (const x of s.rs) if (x.owner === 'g' + s.myGang) soldiers += x.guards || 0;
+    const cd = s.me.sq || 0;
+    const busy = (s.squads || []).some((q) => q.target === r);
+    let h = `<div class="squad-box"><b>SEND A RAID</b> <small>${soldiers} soldiers in your compounds · vault ${money(s.vault)}</small>`;
+    if (cd > 0) h += `<div class="warn">Next raid in ${Math.floor(cd / 60)}:${String(cd % 60).padStart(2, '0')}</div>`;
+    else if (busy) h += '<div class="warn">A squad is already attacking here.</div>';
+    h += '<div class="squad-btns">';
+    SQUADS.forEach((S, i) => { h += `<button class="btn small" data-a="squad" data-r="${r}" data-size="${i}" ${cd > 0 || busy || soldiers < S.soldiers || s.vault < S.price ? 'disabled' : ''}>${S.name.toUpperCase()} · ${S.n} fighters<br><small>${S.soldiers} soldiers + ${money(S.price)}</small></button>`; });
+    return h + '</div></div>';
+  }
   function renderMapSel() {
     const el = $('#map-sel');
     if (!el) return;
@@ -848,7 +892,7 @@ export function createUI(root, cb) {
     el.innerHTML = `<div class="sel-box" style="border-color:${ownerColor(rs.owner)}"><b style="color:${ownerColor(rs.owner)}">${esc(R.name)}</b><br>
       ${BIOME_LABEL[R.biome]} · threat T${R.tier}${R.hq ? ' · <span class="warn">FACTION HQ</span>' : ''}<br>
       ${isGang(rs.owner) ? `${esc(ownerName(s, rs.owner))} · ${rs.guards} guards${rs.up ? ` · ${(rs.slots || []).filter(Boolean).length} turrets` : ''}` : `${FACTIONS[rs.owner].short} · garrison ${rs.garrison}/${rs.garrisonMax}`}
-      ${mine ? `<br><button class="btn small" data-upgrades="${U.mapSel}">UPGRADE COMPOUND</button>` : ''}</div>`;
+      ${mine ? `<br><button class="btn small" data-upgrades="${U.mapSel}">UPGRADE COMPOUND</button>` : squadBox(s, U.mapSel)}</div>`;
   }
   $('#modal').addEventListener('mousedown', (e) => {
     if (U.open !== 'map' || e.target.id !== 'bigmap') return;
@@ -882,14 +926,21 @@ export function createUI(root, cb) {
     const prof = s.prof, cash = s.me.cash;
     const pm = 1 - 0.08 * ((s.up && s.up.market) || 0);
     const baseR = s.regionId;
-    const key = JSON.stringify([baseTab, prof, cash, s.vault, s.up, s.inBase, s.me.bat, baseTab === 'defense' ? s.rs[baseR] : 0, (s.vehicles || []).length, Math.ceil((s.me.heat || 0) / 100), s.me.wd > 0]);
+    const key = JSON.stringify([baseTab, prof, cash, s.vault, s.up, s.inBase, s.me.bat, s.me.gren, baseTab === 'defense' ? s.rs[baseR] : 0, (s.vehicles || []).length, Math.ceil((s.me.heat || 0) / 100), s.me.wd > 0]);
     const inner = $('#modal-inner');
     if (!force && inner._key === key) return;
     inner._key = key;
     const tabs = [['arsenal', 'ARSENAL', 'Arm weapons'], ['clinic', 'CLÍNICA', 'Body mods'], ['locker', 'ARMÁRIO', 'Equip arms'], ['garage', 'GARAGEM', 'Vehicles'], ['vault', 'COFRE', 'Gang vault'], ['defense', 'DEFESA', 'Base turrets']];
     let body = '';
     if (baseTab === 'arsenal') {
-      body = `<p class="tab-intro">Your arms are your weapons. Buy new cyber-arms here, then equip them in the <b>Armário</b>.${pm < 1 ? ` <b>Black Market: -${Math.round((1 - pm) * 100)}%</b>` : ''}</p><div class="cards">`;
+      const gr = s.me.gren || {};
+      let gh = `<p class="tab-intro">GRANADAS — carry up to ${GREN_MAX} of each. <b>Z</b> throws at the cursor, <b>C</b> switches type.</p><div class="cards gcards">`;
+      for (const k of GRENADE_IDS) {
+        const G0 = GRENADES[k], price = Math.round(G0.price * pm), n = gr[k] || 0;
+        gh += `<div class="card gcard"><div class="c-name" style="color:${G0.c}"><i class="gdot" style="background:${G0.c}"></i>${esc(G0.name)} <i>${n}/${GREN_MAX}</i></div><div class="c-pt">${esc(G0.pt)}</div><div class="c-desc">${esc(G0.desc)}</div><button class="btn" data-a="buyG" data-k="${k}" ${n >= GREN_MAX || cash < price ? 'disabled' : ''}>${n >= GREN_MAX ? 'FULL' : 'BUY · ' + money(price)}</button></div>`;
+      }
+      gh += '</div>';
+      body = gh + `<p class="tab-intro">Your arms are your weapons. Buy new cyber-arms here, then equip them in the <b>Armário</b>.${pm < 1 ? ` <b>Black Market: -${Math.round((1 - pm) * 100)}%</b>` : ''}</p><div class="cards">`;
       for (const id of WEAPON_IDS) {
         const Wp = WEAPONS[id];
         const lvl = prof.armory[id];
@@ -1007,7 +1058,11 @@ export function createUI(root, cb) {
     const nSlots = 2 + up.level;
     const bl = up.boca || 0, bs = BOCA.spend[bl];
     const perMin = Math.round((60 / BOCA.interval[bl]) * (bs[0] + bs[1]) / 2);
-    let html = `<div class="boca-box"><b>BOCA DE FUMO</b> · level ${bl + 1}/4 · about <b>R$${perMin}/min</b> into the vault (more when the locals like you). Upgrade it below for more customers.</div>
+    const extraCap = EXTRA_SOLDIERS.base + EXTRA_SOLDIERS.perBarracks * (up.barracks || 0) + (U.world.regions[r].base ? EXTRA_SOLDIERS.mainBase : 0);
+    const here = s.regionId === r;
+    let html = `<div class="soldier-box"><b>SOLDIERS</b> ${rs.guards || 0} on duty · recruits ${rs.extra || 0}/${extraCap} <small>(recruit locals with G in your turf when your crew is full)</small>
+      <button class="btn small" data-a="take" data-r="${r}" ${!here || !(rs.guards > 0) || (s.me.fol || 0) >= FOLLOWER_MAX ? 'disabled' : ''} title="${here ? '' : 'Go to this compound first'}">TAKE ONE AS CREW</button></div>
+      <div class="boca-box"><b>BOCA DE FUMO</b> · level ${bl + 1}/4 · about <b>R$${perMin}/min</b> into the vault (more when the locals like you). Upgrade it below for more customers.</div>
       <p class="tab-intro">Spend the <b>gang vault</b> (${money(s.vault)}) on this compound's defenses. Turrets shoot raiders and rival gangs, and come back online ${60}s after being destroyed. Upgrades are lost if the district falls.</p><div class="slot-grid">`;
     for (let i = 0; i < 4; i++) {
       const sl = slots[i];
@@ -1017,7 +1072,10 @@ export function createUI(root, cb) {
       } else {
         const T = TURRETS[sl.type];
         const upP = sl.mk < TURRET_MAX_MK ? turretUpgradePrice(sl.type, sl.mk) : 0;
+        const hpf = sl.hpf ?? 1, rep = Math.ceil((1 - hpf) * T.price * TURRET_REPAIR_K / 10) * 10;
         html += `<div class="tslot built"><img class="timg" src="${turretIcon(sl.type, gc)}"><div class="c-name">${esc(T.name)} <i>Mk${sl.mk}</i></div><div class="c-desc">${esc(T.desc)} ${Math.round(T.dmg * turretMult(sl.mk))} dmg · range ${Math.round(T.range / TILE)}</div>
+          <div class="bar thp"><div class="fill" style="width:${Math.round(hpf * 100)}%;background:${hpf > 0.6 ? '#3ddc84' : hpf > 0.3 ? '#ffd23f' : '#ff3b5c'}"></div><span>${Math.round(hpf * 100)}%</span></div>
+          ${hpf < 1 ? `<button class="btn tiny" data-a="trep" data-r="${r}" data-s="${i}" ${s.vault < rep ? 'disabled' : ''}>REPAIR · ${money(rep)}</button>` : ''}
           <div class="row2">${sl.mk < TURRET_MAX_MK ? `<button class="btn" data-a="tup" data-r="${r}" data-s="${i}" ${s.vault < upP ? 'disabled' : ''}>Mk${sl.mk + 1} · ${money(upP)}</button>` : '<button class="btn" disabled>MAXED</button>'}</div>
           <div class="tchoices small">${TURRET_IDS.filter((t) => t !== sl.type).map((t) => `<button class="btn tiny" data-a="turret" data-r="${r}" data-s="${i}" data-type="${t}" ${s.vault < TURRETS[t].price ? 'disabled' : ''}>→ ${esc(TURRETS[t].name)} ${money(TURRETS[t].price)}</button>`).join('')}</div></div>`;
       }
@@ -1035,7 +1093,7 @@ export function createUI(root, cb) {
     const s = U.state;
     if (!s) return;
     const r = U.compoundR;
-    const key = JSON.stringify([r, s.vault, s.rs[r]]);
+    const key = JSON.stringify([r, s.vault, s.rs[r], s.regionId === r, s.me.fol]);
     const inner = $('#modal-inner');
     if (!force && inner._key === key) return;
     inner._key = key;
@@ -1057,7 +1115,7 @@ export function createUI(root, cb) {
       const d = b.dataset;
       const a = { t: d.a };
       if (d.w) a.w = d.w; if (d.m) a.m = d.m; if (d.u) a.u = d.u; if (d.slot) a.slot = d.slot; if (d.v) a.v = d.a === 'buyV' ? d.v : Number(d.v);
-      if (d.r) a.r = Number(d.r); if (d.s) a.s = Number(d.s); if (d.type) a.type = d.type; if (d.item) a.item = d.item;
+      if (d.r) a.r = Number(d.r); if (d.s) a.s = Number(d.s); if (d.type) a.type = d.type; if (d.item) a.item = d.item; if (d.k) a.k = d.k; if (d.size) a.size = Number(d.size);
       cb.onAction(a);
       cb.sound('click');
     }
@@ -1077,7 +1135,9 @@ export function createUI(root, cb) {
         ${s && s.seedCode ? `<div class="invite small">Map seed <b class="seed">${esc(s.seedCode)}</b></div>` : ''}
         <label class="vol">MUSIC <input type="range" min="0" max="100" value="${Math.round(getVolume('music') * 100)}" data-vol="music"></label>
         <label class="vol">SOUND FX <input type="range" min="0" max="100" value="${Math.round(getVolume('sfx') * 100)}" data-vol="sfx"></label>
+        <div class="invite small">Neon Quebrada <b>v${VERSION}</b> — everyone in a room needs the same version</div>
         <div class="help">
+          <p><b>Z</b> throw a grenade at the cursor · <b>C</b> switch grenade type · <b>TAB</b> map → click a district next to your turf to <b>send a raid</b></p>
           <p><b>WASD</b> move · <b>Mouse</b> aim · <b>LMB/RMB</b> left/right arm weapon</p>
           <p><b>Q / Space / Shift</b> dash · <b>E</b> nano-heal · <b>R</b> cloak · <b>F</b> shield</p>
           <p><b>V</b> get in / out of a flying vehicle · <b>G</b> recruit a local · <b>B</b> base or compound menu (stand at a QG building to open its shop)</p>

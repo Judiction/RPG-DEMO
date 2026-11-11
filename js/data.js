@@ -4,6 +4,9 @@
 export const TILE = 16;
 
 export const GAME_NAME = 'NEON QUEBRADA';
+export const VERSION = '0.6';
+// 3D buildings: camera height (smaller = stronger lean, you see more of the facades) and a height multiplier
+export const PERSPECTIVE = { camZ: 400, heightMul: 1.3 };      // shown on the title screen; bump to 0.61, 0.62... for each fix before a GitHub sync
 
 // ------------------------------------------------------------------ colors
 // Gang colors (PvE: the host's gang color; PvP: players pick their gang by color).
@@ -117,7 +120,22 @@ export const WEAPONS = {
     name: 'Rail Arm', pt: 'Canhão Trilho', kind: 'beam', dmg: 60, cd: 1.5, range: 230, price: 3400, lvl: 15,
     desc: 'Instant piercing beam through every enemy in line.',
   },
+  chain: {
+    name: 'Chain Lightning', pt: 'Raio Encadeado', kind: 'chain', dmg: 24, cd: 0.75, range: 150, jumps: 4, jumpR: 72, price: 2600, lvl: 11,
+    desc: 'A bolt that jumps from enemy to enemy (up to 5). Stuns drones for a moment.',
+  },
 };
+// grenades: a pouch next to the arms. Z throws at the cursor, C switches type. Up to 3 of each.
+export const GRENADES = {
+  impact: { name: 'Impact', pt: 'Granada de Impacto', price: 140, c: '#ff8a3d', desc: 'Explodes on contact. Big blast.' },
+  sticky: { name: 'Sticky', pt: 'Granada Grudenta', price: 180, c: '#3ddc84', desc: 'Sticks to the first enemy it hits, then blows.' },
+  flash: { name: 'Flash', pt: 'Granada de Luz', price: 110, c: '#f2f2f2', desc: 'Blinds and stuns everyone around it for 3s.' },
+  smoke: { name: 'Smoke', pt: 'Fumaça', price: 90, c: '#9aa6b8', desc: 'A thick cloud: enemies cannot see through it (8s).' },
+  emp: { name: 'EMP', pt: 'Pulso EMP', price: 160, c: '#22e5ff', desc: 'Fries drones, mechs and turrets; drains vehicles.' },
+  fire: { name: 'Incendiary', pt: 'Molotov Neon', price: 150, c: '#ff3fa4', desc: 'Sets the ground on fire for 6s. Everything inside burns.' },
+};
+export const GRENADE_IDS = Object.keys(GRENADES);
+export const GREN_MAX = 3, GREN_RANGE = 160, GREN_CD = 0.8;
 export const WEAPON_IDS = Object.keys(WEAPONS);
 export const MAX_WEAPON_LVL = 5;
 export const weaponMult = (lvl) => 1 + 0.3 * (lvl - 1);
@@ -173,7 +191,7 @@ export const CREW_WEAPONS = { gun: ['pistol', 'smg', 'shotgun', 'burst', 'rail']
 export const FOLLOWER_MAX = 4;           // followers per player in total (crew from captures + recruited civilians)
 
 // Recoil impulse (px/s) pushed into the shooter when firing. Negative = lunge forward (melee).
-export const RECOIL = { fist: -30, pistol: 32, blade: -40, shotgun: 120, whip: 24, hammer: -70, flamer: 10, smg: 14, rocket: 150, rail: 180 };
+export const RECOIL = { fist: -30, pistol: 32, blade: -40, shotgun: 120, whip: 24, hammer: -70, flamer: 10, smg: 14, rocket: 150, rail: 180, chain: 40 };
 export const EXPLOSION_PUSH = 300;       // knockback (px/s) at the center of an explosion
 
 // ------------------------------------------------------------------ civilians
@@ -215,7 +233,25 @@ export const VAULT_UPGRADES = {
   intel: { name: 'Informants', desc: '+15s warning before raids', prices: [1000, 2500] },
   rescue: { name: 'Rescue Squad', desc: '-1.5s respawn time', prices: [900, 2200] },
 };
-export const BASE_GUARDS = 2;
+export const BASE_GUARDS = 3;
+// soldiers recruited from the street (crew full, in your own turf) join the compound: +3 per compound, +2 per Barracks, +6 at the main base
+export const EXTRA_SOLDIERS = { base: 3, perBarracks: 2, mainBase: 6 };
+// raids you send from the TAB map (soldiers are taken from your compounds' guards; money from the vault)
+export const SQUADS = [
+  { name: 'Small', n: 4, soldiers: 2, price: 600, tier: 1 },
+  { name: 'Medium', n: 7, soldiers: 4, price: 1500, tier: 2 },
+  { name: 'Large', n: 11, soldiers: 6, price: 3200, tier: 3 },
+];
+export const SQUAD_COOLDOWN = 180;
+// police helicopters (can't be shot down): attack for a while, leave, come back if you're still wanted
+export const HELI = { speed: 210, attackT: 13, radius: 86, back: 45, mg: { cd: 0.08, dmg: 5, burst: 14, pause: 0.9 }, rocket: { cd: 1.5, dmg: 38, aoe: 38 } };
+// civilians flying their cars over the city (press V next to one to steal it)
+export const CIV_CARS = { perPlayer: 3, max: 10, speed: [55, 80], theft: 35 };
+// Rei da Boca: hold the central BOCA KING base for this long in total to win (host can change it)
+export const KING_TIMES = [5, 10, 15, 20];
+export const TURRET_HP_MULT = 2.5;          // turrets take a lot of damage before they go down (then you buy a new one)
+export const TURRET_REPAIR_K = 0.6;         // repair cost = missing HP share × price × this
+export const FACTION_UPGRADE_T = 75;        // seconds between NPC faction upgrade purchases
 export const COMPOUND_INCOME = 6;        // R$ per income tick (every 10 s) per compound, + tier
 
 // ------------------------------------------------------------------ compound (district) upgrades
@@ -254,7 +290,7 @@ export const COMPOUND_UP_IDS = Object.keys(COMPOUND_UPS);
 // ------------------------------------------------------------------ raids
 export const RAID_WARN = 30;
 export const RAID_INTERVAL = (owned) => Math.max(130, 260 - owned * 6);
-export const RAID_SIZE = (owned) => Math.min(18, 5 + Math.floor(owned * 0.8));
+export const RAID_SIZE = (owned) => Math.min(30, 5 + Math.floor(owned * 1.1));   // bigger turf = bigger raids
 
 // ------------------------------------------------------------------ PvP
 export const PVP_WIN_SHARE = 0.6;        // hold 60% of the city to win
