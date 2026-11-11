@@ -342,6 +342,62 @@ function paintWall(b, side, len, rnd, tint = '#ff3f8e') {
     groundLine(S);
     return S;
   }
+  if (st === 'igreja') {
+    // the big churches: white stone, gold trim, buttresses, tall stained-glass windows; the front has a rose window,
+    // a neon cross and big open doors with warm light pouring out
+    const stone = '#ece4d4';
+    P(0, 0, len, H, stone);
+    for (let y = 2; y < H; y += 5) { P(0, y, len, 1, shade(stone, -0.08)); for (let x = (y % 10 ? 0 : 6); x < len; x += 12) P(x, y - 4, 1, 4, shade(stone, -0.1)); }
+    speckle(P, rnd, 0, 0, len, H, len * 0.6, [shade(stone, -0.05), shade(stone, 0.04)]);
+    P(0, 0, len, 4, '#d8c890'); P(0, 4, len, 1, '#8a7440'); S.E(0, 2, len, 1, '#ffd88a');
+    // buttresses
+    for (let x = 0; x < len; x += 22) { P(x, 5, 4, H - 5, shade(stone, -0.14)); P(x, 5, 1, H - 5, shade(stone, 0.06)); P(x - 1, 5, 6, 2, '#d8c890'); }
+    const glass = [['#ff3fa4', '#ffd23f', '#22e5ff', '#a66bff'], ['#3ddc84', '#ff8a3d', '#9af0ff', '#ff3fa4']];
+    const arch = (x, y, w, h, k) => {
+      P(x - 1, y - 2, w + 2, h + 3, '#2a2236');
+      for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) {
+        if (yy < 2 && (xx === 0 || xx === w - 1)) continue;
+        const c = glass[k % 2][((xx >> 1) + (yy >> 2) + k) % 4], c2 = glass[(k + 1) % 2][((xx >> 1) + (yy >> 2)) % 4];
+        S.E(x + xx, y + yy, 1, 1, c, c2);
+      }
+      for (let yy = 3; yy < h; yy += 4) P(x, y + yy, w, 1, '#3a3046');          // lead lines
+      P(x + (w >> 1), y, 1, h, '#3a3046');
+      S.anim = true;
+    };
+    const front = side === 'S';
+    const winH = Math.min(18, H - 24), winY = 10;
+    for (let x = 8, k = 0; x < len - 8; x += 22, k++) {
+      if (front && Math.abs(x + 3 - len / 2) < 18) continue;
+      arch(x, winY, 7, winH, k);
+      if (H > 50) arch(x, winY + winH + 6, 7, Math.min(10, H - winY - winH - 16), k + 1);
+    }
+    if (front) {
+      const cx = (len / 2) | 0;
+      // rose window
+      const ry = 16, rr = 7;
+      P(cx - rr - 1, ry - rr - 1, rr * 2 + 3, rr * 2 + 3, '#2a2236');
+      for (let yy = -rr; yy <= rr; yy++) for (let xx = -rr; xx <= rr; xx++) {
+        const d = Math.hypot(xx, yy);
+        if (d > rr + 0.4) continue;
+        const a = Math.atan2(yy, xx), seg = ((a + Math.PI) / (Math.PI * 2) * 8) | 0;
+        const c = d < 2 ? '#ffffff' : d > rr - 1.2 ? '#ffd23f' : ['#ff3fa4', '#22e5ff', '#a66bff', '#3ddc84'][seg % 4];
+        S.E(cx + xx, ry + yy, 1, 1, c, d < 2 ? '#ffd88a' : ['#22e5ff', '#ff3fa4', '#3ddc84', '#a66bff'][seg % 4]);
+      }
+      // the doors: a tall arch, wooden doors open, warm light inside
+      const dw = 16, dh = Math.min(24, H - 30), dx = cx - dw / 2;
+      P(dx - 3, H - dh - 4, dw + 6, dh + 4, '#d8c890');
+      P(dx - 2, H - dh - 3, dw + 4, dh + 3, '#4a3020');
+      S.E(dx, H - dh, dw, dh, '#ffd88a', '#ffcf6a');
+      for (let y = H - dh + 3; y < H; y += 3) S.E(dx + 2, y, dw - 4, 1, '#ffe8b0', '#ffd88a');
+      P(dx - 2, H - dh, 3, dh, '#6a4428'); P(dx + dw - 1, H - dh, 3, dh, '#6a4428');           // the open door leaves
+      // neon cross over the doors
+      S.E(cx, H - dh - 14, 1, 9, '#ffffff', '#ffd88a'); S.E(cx - 3, H - dh - 11, 7, 1, '#ffffff', '#ffd88a');
+      // steps
+      P(dx - 6, H - 3, dw + 12, 3, '#c8c0b0'); P(dx - 6, H - 3, dw + 12, 1, '#f0e8d8');
+    } else if (rnd() < 0.5) pixacao(S, rnd, 4, H - 8, Math.min(30, len - 8), null);
+    groundLine(S);
+    return S;
+  }
   if (st === 'house' || st === 'church' || st === 'kiosk' || st === 'ruin') {
     const col = st === 'church' ? '#f0e6d2' : st === 'kiosk' ? '#d8b880' : st === 'ruin' ? '#6a6870' : pick(HOUSE_WALLS);
     P(0, 0, len, H, col);
@@ -575,6 +631,27 @@ function paintRoof(b, rnd, tint = '#ff3f8e') {
     P(0, 0, W, 1, shade(col, 0.4)); P(0, D - 1, W, 1, shade(col, -0.4));
     return S;
   }
+  if (st === 'igreja') {
+    // slate roof with a copper dome in the middle, a golden cross on the dome, gold trim all around
+    const col = '#3a4258';
+    P(0, 0, W, D, col);
+    for (let y = 0; y < D; y += 3) for (let x = (y % 6 ? 0 : 3); x < W; x += 6) P(x, y, 5, 2, shade(col, (x + y) % 4 ? 0.06 : -0.06));
+    parapet(col);
+    S.E(1, 1, W - 2, 1, '#ffd88a'); S.E(1, D - 2, W - 2, 1, '#ffd88a'); S.E(1, 1, 1, D - 2, '#ffd88a'); S.E(W - 2, 1, 1, D - 2, '#ffd88a');
+    const cx = (W / 2) | 0, cy = (D / 2) | 0, r = Math.max(8, Math.min(W, D) / 2 - 6);
+    for (let yy = -r; yy <= r; yy++) for (let xx = -r; xx <= r; xx++) {
+      const d = Math.hypot(xx, yy);
+      if (d > r) continue;
+      const lit = 0.25 - (xx + yy) / (r * 4);
+      P(cx + xx, cy + yy, 1, 1, d > r - 1.5 ? '#c8a04a' : shade('#4a9a86', lit + ((Math.atan2(yy, xx) * 4 / Math.PI) | 0) % 2 * 0.05));
+    }
+    for (let a = 0; a < 8; a++) { const an = a / 8 * Math.PI * 2; for (let k = 3; k < r - 1; k++) P(Math.round(cx + Math.cos(an) * k), Math.round(cy + Math.sin(an) * k), 1, 1, '#2f6a5c'); }
+    S.E(cx - 1, cy - 7, 3, 15, '#ffd23f', '#ffffff'); S.E(cx - 5, cy - 3, 11, 3, '#ffd23f', '#ffffff');
+    S.anim = true;
+    // small bell turrets in the corners
+    for (const [x, y] of [[3, 3], [W - 9, 3], [3, D - 9], [W - 9, D - 9]]) { P(x, y, 6, 6, '#d8c890'); P(x + 1, y + 1, 4, 4, '#8a7440'); P(x + 2, y + 2, 2, 2, '#ffd23f'); }
+    return S;
+  }
   if (st === 'house' || st === 'church') {
     // pitched clay tile roof
     const col = st === 'church' ? '#8a4a3a' : pick(['#c4553a', '#b84a30', '#d0683f', '#7a4a6a', '#9a5a3a']);
@@ -733,8 +810,8 @@ export function buildingArt(b, tint = null) {
   }
   const roof = paintRoof(b, rnd, tint || '#ff3f8e');
   const anim = b.sign ? b.sign.anim : b.board ? b.board.anim : 'steady';
-  const litMul = { hq: 1.4, bar: 1.2, shack: 0.9, cwall: 0, garage: 0.6, boca: 1.3, brick: 1.0, tower: 1.25, apartment: 1.1, shop: 0.9, favela: 0.9, house: 0.8, club: 0.4, church: 0.6, warehouse: 0.35, factory: 0.5, kiosk: 0.6, ruin: 0, container: 0 }[b.style] ?? 0.8;
-  const art = { W, D, H: b.H, k: projK(b.H), walls, roof, anim: b.style === 'bar' ? 'swap' : anim, seed: (b.seed % 1000) / 10, litMul, bakeKey: '', baked: null };
+  const litMul = { hq: 1.4, bar: 1.2, shack: 0.9, cwall: 0, garage: 0.6, boca: 1.3, brick: 1.0, tower: 1.25, apartment: 1.1, shop: 0.9, favela: 0.9, house: 0.8, club: 0.4, church: 0.6, igreja: 0, warehouse: 0.35, factory: 0.5, kiosk: 0.6, ruin: 0, container: 0 }[b.style] ?? 0.8;
+  const art = { W, D, H: b.H, k: projK(b.H), walls, roof, anim: b.style === 'bar' ? 'swap' : b.style === 'igreja' ? 'swap' : anim, seed: (b.seed % 1000) / 10, litMul, bakeKey: '', baked: null };
   if (ak) b._arts[ak] = art;
   b._art = art;
   return art;

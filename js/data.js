@@ -4,7 +4,7 @@
 export const TILE = 16;
 
 export const GAME_NAME = 'NEON QUEBRADA';
-export const VERSION = '0.62';
+export const VERSION = '0.63';
 // 3D buildings: camera height (smaller = stronger lean, you see more of the facades) and a height multiplier
 export const PERSPECTIVE = { camZ: 400, heightMul: 1.3 };      // shown on the title screen; bump to 0.61, 0.62... for each fix before a GitHub sync
 
@@ -134,7 +134,7 @@ export const WEAPONS = {
   },
   // rare: only dropped by the ET Comandante (alien invasion). Never sold.
   ufo: {
-    name: 'Varginha Ray', pt: 'Raio de Varginha', kind: 'beam', dmg: 30, cd: 0.5, range: 215, color: '#7dff4a', rare: true, price: 3000, lvl: 1,
+    name: 'Varginha Ray', pt: 'Raio de Varginha', kind: 'beam', dmg: 24, cd: 0.55, range: 200, color: '#7dff4a', rare: true, price: 3000, lvl: 1,
     desc: 'Alien tech from the ET Comandante. A fast green ray that cuts through everything in line.',
   },
 };
@@ -266,7 +266,7 @@ export const KING_TIMES = [5, 10, 15, 20];
 // ------------------------------------------------------------------ v0.62
 // NPC targeting ("aggro"): hit back at whoever hurt you lately, otherwise the closest enemy in sight.
 // Scores are distances: lower wins. attackerK shrinks the score of recent attackers, stickK of the current target.
-export const AGGRO = { memory: 4, attackerK: 0.45, stickK: 0.7, rethink: 0.5 };
+export const AGGRO = { memory: 4, attackerK: 0.3, stickK: 0.7, rethink: 0.5 };
 // base guards: calm = walk around outside the walls; defense = enemies inside the walls, everyone goes in
 export const GUARD = { ringMin: 2, ringMax: 5, spot: 11, calmAfter: 4 };
 // turrets on the walls stand high: they see and shoot farther
@@ -283,7 +283,20 @@ export const ALIENS = {
   warn: 8, beamT: 4, hoverT: 30,
   count: (players) => Math.min(16, 6 + 2 * players),
   hp: 2.0, dmg: 1.25, reward: 2.5,
+  // who they come for: the strongest player (score = level × levelW + kills)
+  levelW: 10, waitStrongest: 120,   // if the strongest can't be reached (bar, jail, safe zone...), wait up to this long
 };
+// "farmando aura": dance (T) next to civilians and they dance along. Gets your respect back in that district,
+// but only up to neutral (CIV.repStart). Recruiting is still how you go higher.
+export const AURA = { range: 6, perCiv: 3, maxPer: 15, cooldown: 4 };
+// churches: T next to the priest = pray with your crew (organ music). Heals everyone around at the end.
+// Small chance one of your crew turns into a healer (white robe): every 30 s they heal you and the crew around.
+export const CHURCH = { prayT: 10, heal: 0.35, range: 7, cooldown: 60, healerChance: 0.12, healerMax: 1, healEvery: 30, healerHeal: 0.12, healerRange: 8 };
+// prison: when the cops put you down, they cuff you. A minute inside, a fine per star, wanted level cleared.
+export const JAIL = { time: 60, finePerStar: 300 };
+export const JAIL_ID = 99;          // the prison uses the bar slot (p.inBar) with this id
+// police on the streets even when nobody is wanted (per player around them)
+export const PATROL = { cars: 2, cops: 3, maxCars: 8, maxCops: 14, carSpeed: 105, spot: 8 };
 export const TURRET_HP_MULT = 2.5;          // turrets take a lot of damage before they go down (then you buy a new one)
 export const TURRET_REPAIR_K = 0.6;         // repair cost = missing HP share × price × this
 export const FACTION_UPGRADE_T = 75;        // seconds between NPC faction upgrade purchases
@@ -314,8 +327,8 @@ export const COMPOUND_UPS = {
 };
 // the boca de fumo in every gang compound: locals walk in and buy (money → gang vault). Index = upgrade level.
 export const BOCA = {
-  interval: [14, 10, 7.5, 5.5],                    // seconds between customers (better reputation = more often)
-  spend: [[10, 18], [15, 25], [20, 34], [28, 46]],  // R$ per customer
+  interval: [13, 9, 6.5, 4.5],                     // seconds between customers (better reputation = more often)
+  spend: [[14, 24], [24, 40], [36, 58], [52, 84]],  // R$ per customer
   maxWalking: 4,                                    // customers on their way at once (per boca)
 };
 // crew (followers) level up with kills
@@ -430,8 +443,11 @@ export const WANTED = {
   witnessRange: 11,       // tiles
   decay: 1.5,             // heat lost per second while no cop is near
   escapeRange: 24,        // tiles away from every cop...
-  escapeTime: 14,         // ...for this long and you lose them
+  escapeTime: 14,         // ...for this long and they lose you (stars stay, new waves pause)
   bribe: 350,             // R$ per star to pay off your wanted level at your base
+  lostDecay: 1.1,         // heat lost per second once the cops lost you (~90 s per star)
+  reinforce: [0, 12, 10, 8, 7, 6],   // seconds before a new wave when every cop sent after you is down (by stars)
+  starHp: 0.15, starDmg: 0.08,       // cops get tougher with each star above 1
 };
 // what each wanted level sends (tiers of the police faction)
 export const POLICE_WAVES = [
@@ -465,3 +481,27 @@ export const BAR_ROOM = {
     { x: 470, y: 230, w: 50, h: 40 },                // sofa booth
   ],
 };
+
+// ------------------------------------------------------------------ prison interior (pixels, interior space)
+// A cell block: six cells along the top (open doors), tables in the middle, the guard desk, a small yard. No way out:
+// the gate opens when your time is up.
+export const JAIL_ROOM = (() => {
+  const w = 544, h = 304;
+  const solids = [
+    { x: 0, y: 0, w, h: 16 }, { x: 0, y: 0, w: 16, h }, { x: w - 16, y: 0, w: 16, h }, { x: 0, y: h - 16, w, h: 16 },
+  ];
+  const cells = [];
+  for (let k = 0; k < 6; k++) {
+    const x0 = 32 + k * 80;
+    cells.push({ x: x0 + 6, y: 16, w: 74, h: 80 });
+    solids.push({ x: x0, y: 16, w: 6, h: 84 });                                        // wall between cells
+    solids.push({ x: x0 + 6, y: 96, w: 26, h: 4 }, { x: x0 + 54, y: 96, w: 26, h: 4 });  // bars (the door is open)
+    solids.push({ x: x0 + 10, y: 22, w: 26, h: 12 });                                   // bunk
+  }
+  solids.push({ x: 512, y: 16, w: 6, h: 84 });
+  const tables = [{ x: 150, y: 150, w: 44, h: 18 }, { x: 240, y: 196, w: 44, h: 18 }];
+  const desk = { x: 24, y: 232, w: 74, h: 20 };
+  const bench = { x: 440, y: 254, w: 34, h: 10 };
+  solids.push(...tables, desk, bench);
+  return { w, h, cells, tables, desk, bench, yard: { x: 330, y: 176, w: 190, h: 104 }, gate: { x: 256, y: h - 16, w: 32 }, spawn: { x: 272, y: 132 }, solids };
+})();

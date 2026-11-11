@@ -638,6 +638,29 @@ export function generateWorld(seed, opts = {}) {
     }
   }
 
+  // ---------------------------------------------------------------- churches (pray with your crew next to the padre)
+  const churches = [];
+  {
+    const want = Math.min(4, Math.max(2, Math.round(regions.length / 7)));
+    const okStyle = { shop: 1, house: 1, apartment: 1, tower: 1, church: 1, warehouse: 1 };
+    const cands = buildings.filter((b) => !b.compound && b.bar === undefined && okStyle[b.style] && b.w >= 4 && b.h >= 3 && b.w <= 8);
+    cands.sort((a, b2) => (b2.w * b2.h - a.w * a.h) * 0.02 + hash2(a.x, a.y, seed ^ 0xc4c4) - hash2(b2.x, b2.y, seed ^ 0xc4c4));
+    const NAMES = ['Igreja Neon de São Jorge', 'Catedral do Morro', 'Igreja da Luz Eterna', 'Capela Santa Bárbara 2099', 'Igreja de Nossa Senhora do Chip', 'Templo da Graça Digital'];
+    for (const b of cands) {
+      if (churches.length >= want) break;
+      const dx = b.x + (b.w >> 1), dy = b.y + b.h;
+      if (dy + 2 >= H) continue;
+      let ok = true;
+      for (let k = 0; k <= 2 && ok; k++) { const t = tiles[I(dx, dy + k)]; if (t === T.BUILD || t === T.WALL || t === T.WATER || t === T.TREE || reserved[I(dx, dy + k)]) ok = false; }
+      if (!ok) continue;
+      if (churches.some((o) => Math.abs(o.doorX - (dx + 0.5) * TILE) < 34 * TILE && Math.abs(o.doorY - (dy + 0.5) * TILE) < 34 * TILE)) continue;
+      if (bars.some((o) => Math.abs(o.doorX - (dx + 0.5) * TILE) < 8 * TILE && Math.abs(o.doorY - (dy + 0.5) * TILE) < 8 * TILE)) continue;
+      const id = churches.length;
+      b.style = 'igreja'; b.church = id; b.churchName = NAMES[(id + (seed % 5)) % NAMES.length];
+      churches.push({ id, b, doorX: (dx + 0.5) * TILE, doorY: (dy + 0.1) * TILE, px: (dx + 0.5) * TILE, py: (dy + 1.2) * TILE, name: b.churchName, r: b.r });
+    }
+  }
+
   // ---------------------------------------------------------------- trees
   const tseed = seed ^ 0xbeef;
   for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
@@ -657,8 +680,8 @@ export function generateWorld(seed, opts = {}) {
   // ---------------------------------------------------------------- connectivity
   const world = {
     seed, type, size: sizeKey, W, H, tiles, region, regions, buildings, coast, baseId, bases, factionRegions, hqs, kingId,
-    props: [], lights: [], propGrid: null, lightGrid: null, reach: null, spawnTiles: null, roadTiles: null, bars,
-    breakables: [], breakGrid: null, wires: [], wireGrid: null, smokers: [], holos: [], hangouts: [],
+    props: [], lights: [], propGrid: null, lightGrid: null, reach: null, spawnTiles: null, roadTiles: null, bars, churches,
+    breakables: [], breakGrid: null, wires: [], wireGrid: null, smokers: [], holos: [], hangouts: [], roofSigns: [],
   };
   const b0 = regions[baseId].compound;
   let reach = floodReach(world, b0.coreX, b0.coreY);
@@ -1015,6 +1038,22 @@ function buildProps(world) {
       const brand = brandOf(['corp', 'night', 'food'], h);
       world.holos.push({ x: sx, y: (b.y + b.h / 2) * TILE, z: b.H, brand, seed: (h * 1000) | 0 });
     }
+    // neon letters standing on a steel frame on the roof (more neon up top), the church's big cross
+    if (b.style === 'igreja') world.roofSigns.push({ x: (b.x + b.w / 2) * TILE, y: (b.y + b.h * 0.42) * TILE, z: b.H, kind: 'cross', seed: (h * 1000) | 0 });
+    else if (!b.compound && !b.board && b.floors >= 2 && b.w >= 3 && !world.holos.some((o) => o.z === b.H && Math.abs(o.x - sx) < 1 && Math.abs(o.y - (b.y + b.h / 2) * TILE) < 1)) {
+      const hs = hash2(b.x, b.y, ps + 9);
+      const chance = { tower: 0.6, apartment: 0.5, club: 0.8, shop: 0.45, bar: 0.9, warehouse: 0.3, factory: 0.3, favela: 0.12 }[b.style] || 0;
+      if (hs < chance) {
+        const brand = b.style === 'bar' ? -1 : brandOf(b.style === 'club' ? ['night'] : b.style === 'warehouse' || b.style === 'factory' ? ['ind', 'corp'] : ['corp', 'night', 'food', 'shop'], hash2(b.y, b.x, ps + 10));
+        world.roofSigns.push({ x: (b.x + b.w / 2) * TILE, y: (b.y + b.h * (b.h >= 4 ? 0.3 : 0.45)) * TILE, z: b.H, kind: 'letters', brand, text: b.style === 'bar' ? (b.barName || 'BAR').toUpperCase() : null, maxW: b.w * TILE - 6, anim: hs < chance * 0.3 ? 'flicker' : hs < chance * 0.65 ? 'chase' : 'steady', seed: (hs * 1000) | 0 });
+      }
+    }
+    if (b.style === 'igreja') {
+      // warm light pouring out of the open doors, and the stained glass glowing at night
+      lights.push({ x: sx, y: sy + 2, r: 90, c: '#ffd88a', anim: 'pulse', seed: h * 100 });
+      lights.push({ x: b.x * TILE - 4, y: (b.y + b.h / 2) * TILE, r: 60, c: '#c89aff', night: true, spill: true });
+      lights.push({ x: (b.x + b.w) * TILE + 4, y: (b.y + b.h / 2) * TILE, r: 60, c: '#7ad8ff', night: true, spill: true });
+    }
     // lit windows spill a little warm light at the foot of the building at night
     if (b.style !== 'container' && b.style !== 'ruin' && h < 0.55) lights.push({ x: sx, y: sy, r: 22 + b.w * 3, c: b.style === 'tower' ? '#9ab8ff' : '#ffcf7a', night: true });
     // big buildings full of windows wash the street around them in colored light at night
@@ -1134,6 +1173,7 @@ function buildProps(world) {
   world.wireGrid = grid(world.wires, (o) => (o.x1 + o.x2) / 2, (o) => (o.y1 + o.y2) / 2);
   world.smokeGrid = grid(world.smokers);
   world.holoGrid = grid(world.holos);
+  world.roofGrid = grid(world.roofSigns);
   world.hangGrid = grid(world.hangouts);
   world.gridW = cw; world.gridH = ch;
   world.bucket = bucket;
@@ -1147,6 +1187,7 @@ export function buildingFloors(b, r) {
     case 'house': return 1 + (r < 0.4 ? 1 : 0);
     case 'shop': return 2 + (r < 0.4 ? 1 : 0);
     case 'church': return 3;
+    case 'igreja': return 4;
     case 'apartment': return 3 + Math.floor(r * 3) + (b.w * b.h > 18 ? 1 : 0);
     case 'tower': return Math.min(10, 4 + b.fr + Math.floor(r * 3) + (b.w * b.h > 24 ? 1 : 0));
     case 'club': return 2;

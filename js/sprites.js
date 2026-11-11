@@ -552,7 +552,8 @@ export function civilianSpec(seed, gangColor = null) {
 // ------------------------------------------------------------------ sprite cache (characters)
 const charCache = new Map();
 export function charSprite(spec, dir, frame) {
-  if (!spec._k) spec._k = JSON.stringify(spec);
+  // the cache key is not enumerable: specs copied with Object.assign (outfits, crew levels) get their own key
+  if (!Object.prototype.hasOwnProperty.call(spec, '_k')) Object.defineProperty(spec, '_k', { value: JSON.stringify(spec), enumerable: false });
   const key = spec._k + dir + ':' + frame;
   let c = charCache.get(key);
   if (c) return c;

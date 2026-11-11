@@ -171,3 +171,67 @@ export function sfx(name, x, y, volume = 1) {
     default: tone(t, 0.05, { f: 600, v: 0.1, out });
   }
 }
+
+// ------------------------------------------------------------------ church organ (praying): ~10 s of chords
+// Additive "drawbar" pipes (fundamental, octave, twelfth, two octaves), a pedal bass, a big hall reverb.
+// The music ducks while it plays.
+let organ = null, hall = null;
+function hallVerb() {
+  if (hall) return hall;
+  const len = Math.floor(ac.sampleRate * 3.2);
+  const buf = ac.createBuffer(2, len, ac.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6); }
+  hall = ac.createConvolver(); hall.buffer = buf;
+  const wet = ac.createGain(); wet.gain.value = 0.55;
+  hall.connect(wet); wet.connect(sfxBus);
+  return hall;
+}
+export function stopOrgan() {
+  if (!organ || !ac) return;
+  const t = ac.currentTime;
+  organ.out.gain.cancelScheduledValues(t);
+  organ.out.gain.setTargetAtTime(0.0001, t, 0.25);
+  for (const o of organ.oscs) { try { o.stop(t + 1.5); } catch { /* already stopped */ } }
+  musicBus.gain.cancelScheduledValues(t);
+  musicBus.gain.setTargetAtTime(vol.music, t, 0.6);
+  organ = null;
+}
+export function playOrgan(dur = 10, volume = 1) {
+  if (!ac) return;
+  stopOrgan();
+  const t0 = ac.currentTime + 0.05;
+  const out = ac.createGain(); out.gain.value = 0.0001;
+  const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2600; lp.Q.value = 0.4;
+  out.connect(lp); lp.connect(sfxBus); lp.connect(hallVerb());
+  out.gain.setTargetAtTime(0.16 * volume, t0, 0.35);
+  out.gain.setTargetAtTime(0.0001, t0 + dur - 0.9, 0.45);
+  // tremulant
+  const lfo = ac.createOscillator(), lg = ac.createGain();
+  lfo.frequency.value = 5.2; lg.gain.value = 0.025 * volume;
+  lfo.connect(lg); lg.connect(out.gain);
+  const oscs = [lfo];
+  lfo.start(t0); lfo.stop(t0 + dur + 2);
+  const mt = (m) => 440 * Math.pow(2, (m - 69) / 12);
+  // I – IV – vi – V – I (in F), each chord ~2 s, voices move smoothly
+  const prog = [[53, 57, 60, 65], [53, 58, 62, 65], [50, 57, 62, 65], [48, 55, 60, 64], [53, 57, 60, 65]];
+  const bass = [29, 34, 26, 24, 29];
+  const step = dur / prog.length;
+  const pipe = (m, t, len, v) => {
+    for (const [mul, lvl] of [[1, 1], [2, 0.6], [3, 0.35], [4, 0.28], [6, 0.12]]) {
+      const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = mt(m) * mul;
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(v * lvl, t + 0.08); g.gain.setValueAtTime(v * lvl, t + len - 0.12); g.gain.linearRampToValueAtTime(0.0001, t + len);
+      o.connect(g); g.connect(out); o.start(t); o.stop(t + len + 0.05); oscs.push(o);
+    }
+  };
+  prog.forEach((ch, i) => {
+    const t = t0 + i * step;
+    for (const m of ch) pipe(m, t, step + 0.06, 0.09);
+    pipe(bass[i], t, step + 0.06, 0.16);
+  });
+  // a little melody on top in the second half
+  [72, 70, 69, 67, 69, 72, 77].forEach((m, i) => pipe(m, t0 + dur * 0.45 + i * (dur * 0.5 / 7), dur * 0.5 / 7 + 0.04, 0.05));
+  musicBus.gain.setTargetAtTime(vol.music * 0.15, t0, 0.4);
+  musicBus.gain.setTargetAtTime(vol.music, t0 + dur, 0.8);
+  organ = { out, oscs };
+}

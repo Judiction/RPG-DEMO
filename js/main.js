@@ -8,7 +8,7 @@
 
 import {
   TILE, WEAPONS, ABILITIES, randomLook, LOOK_KEYS, LOOK_OPTIONS, GANG_COLORS, NAME_COLORS, VEHICLES, VEHICLE_IDS,
-  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL, BAR_ROOM, ITEMS, WANTED, isMech, DOWN, WITHDRAW, VERSION,
+  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL, BAR_ROOM, ITEMS, WANTED, isMech, DOWN, WITHDRAW, VERSION, JAIL_ID, JAIL_ROOM, CHURCH,
   GRENADES, GRENADE_IDS, GREN_RANGE,
 } from './data.js';
 import { randomSeed } from './rng.js';
@@ -19,6 +19,7 @@ import { createInput } from './input.js';
 import { createUI, seedCode } from './ui.js';
 import { initAudio, sfx, setListener, setVolume, setEngine } from './audio.js';
 import { createMusic } from './music.js';
+import { playOrgan, stopOrgan } from './audio.js';
 import { PROTOCOL, makeCode, cleanCode, send, receiver, hostRoom, joinRoom, errorText } from './net.js';
 
 const OLD_SAVE_KEY = 'neonquebrada.save.v1';
@@ -104,6 +105,14 @@ const ui = createUI(document.getElementById('menus'), {
     if (k === 'blood') { prefs.blood = renderer.bloodOn = !renderer.bloodOn; if (!renderer.bloodOn) renderer.stains.length = 0; store.set(PREFS_KEY, prefs); ui.toast(`Blood: ${renderer.bloodOn ? 'ON' : 'OFF'}`, 'good'); ui.togglePause(); ui.togglePause(); }
     if (k === 'stats') { sendAction({ t: 'stats' }); ui.showStats(null); }
     if (k === 'menu') { ui.closeModal(); ui.togglePause(); }
+    if (k === 'ally') {
+      const gangs = app.mode === 'host' ? [...app.game.gangs.values()].map((g) => ({ idx: g.idx, name: g.name, out: g.out, owned: G.ownedCount(app.game, g.id) })) : client.rg.gangs;
+      const online = new Set((app.mode === 'host' ? [...app.game.players.values()].map((p) => G.gangIdx(p.gang)) : [...client.roster.values()].map((r) => r.g)));
+      ui.showAlliance({ gangs: gangs.filter((g) => !g.out && g.idx !== myGangIdx()).map((g) => ({ ...g, online: online.has(g.idx) })), pvp: (app.mode === 'host' ? app.game.mode : client.mode) === 'pvp', myName: (gangs.find((g) => g.idx === myGangIdx()) || {}).name || '' });
+    }
+    if (k && k.startsWith('ally:')) { sendAction({ t: 'ally', g: Number(k.slice(5)) }); ui.closeModal(); ui.toast('Alliance request sent. Waiting for their answer...', 'good'); }
+    if (k && k.startsWith('allyok:')) { sendAction({ t: 'allyans', from: Number(k.slice(7)), ok: true }); ui.closeModal(); }
+    if (k && k.startsWith('allyno:')) { sendAction({ t: 'allyans', from: Number(k.slice(7)), ok: false }); ui.closeModal(); }
     if (k === 'quality') { prefs.quality = renderer.quality = renderer.quality === 'low' ? 'high' : 'low'; store.set(PREFS_KEY, prefs); ui.toast(`Graphics: ${renderer.quality.toUpperCase()}`, 'good'); }
   },
 });
@@ -434,7 +443,7 @@ function applySnapshot(s) {
   });
   syncMap(client.allies, s.A, (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => {
     o.tx = r[1]; o.ty = r[2]; o.hp = r[3]; o.maxHp = r[4]; o.flash = r[5] & 2 ? 0.1 : 0; o.moving = !!(r[5] & 8); o.aim = r[6];
-    o.team = r[7]; o.follow = r[8] || null; o.tier = r[9]; o.civ = r[10] || 0; o.melee = !!r[11]; o.lvl = r[12] || 1; o.rev = !!r[13]; o.emote = r[14] || 0;
+    o.team = r[7]; o.follow = r[8] || null; o.tier = r[9]; o.civ = r[10] || 0; o.melee = !!r[11]; o.lvl = r[12] || 1; o.rev = !!r[13]; o.emote = r[14] || 0; o.healer = !!r[15];
   });
   syncMap(client.turrets, s.T || [], (r) => ({ id: r[0] }), (o, r) => {
     o.x = r[1]; o.y = r[2]; o.aim = r[3]; o.hp = r[4]; o.maxHp = r[5]; o.type = TURRET_IDS[r[6]]; o.mk = r[7]; o.team = r[8]; o.dead = !!(r[9] & 1); o.flash = !!(r[9] & 2);
@@ -444,7 +453,7 @@ function applySnapshot(s) {
     o.flying = !!(r[8] & 1); o.flash = !!(r[8] & 2); o.charging = !!(r[8] & 4); o.civ = r[8] & 8 ? 1 : 0; o.team = r[9]; o.seats = r.slice(10).map((x) => x || null);
   });
   syncMap(client.civs, s.C || [], (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => {
-    o.tx = r[1]; o.ty = r[2]; o.seed = r[3]; o.flee = !!(r[4] & 1); o.flash = !!(r[4] & 2); o.moving = !!(r[4] & 4); o.aim = r[5]; o.hpPct = r[6];
+    o.tx = r[1]; o.ty = r[2]; o.seed = r[3]; o.flee = !!(r[4] & 1); o.flash = !!(r[4] & 2); o.moving = !!(r[4] & 4); o.dance = !!(r[4] & 8); o.aim = r[5]; o.hpPct = r[6];
   });
   syncMap(client.pickups, s.K, (r) => ({ id: r[0] }), (o, r) => { o.type = ['cash', 'heal', 'ufo'][r[1]] || 'heal'; o.x = r[2]; o.y = r[3]; });
   syncMap(client.pets, s.PT || [], (r) => ({ id: r[0], x: r[1], y: r[2] }), (o, r) => { o.tx = r[1]; o.ty = r[2]; o.kind = r[3] ? 'cat' : 'dog'; o.seed = r[4]; o.moving = !!(r[5] & 1); o.flee = !!(r[5] & 2); o.happy = !!(r[5] & 4); o.sit = !!(r[5] & 8); o.aim = r[6]; });
@@ -847,11 +856,71 @@ function handleEvent(ev) {
       break;
     case 'wanted':
       if (ev.id !== app.myId) break;
-      if (ev.stars > 0) { sfx('siren'); ui.alert(`${'★'.repeat(ev.stars)} <b>WANTED</b> — the police are coming! Run (lose them), fight (beat the response) or pay them off at the QG.`, 'raid', 5000); }
-      else if (ev.why === 'beat') { sfx('capture'); ui.alert('You beat the police response. Wanted level cleared!', 'good'); }
-      else if (ev.why === 'escaped') { sfx('cup'); ui.alert('You lost the police. Wanted level cleared.', 'good'); }
+      if (ev.why === 'lost') { sfx('cup'); ui.alert(`You lost the police! ${'★'.repeat(ev.stars)} Your stars stay and fade slowly — don't let a cop see you (or pay them off at the QG).`, 'good', 6000); }
+      else if (ev.why === 'found' || ev.why === 'spotted') { sfx('siren'); ui.alert(`${'★'.repeat(ev.stars)} ${ev.why === 'spotted' ? 'A cop <b>recognized</b> you' : 'They saw that'} — the chase is back on!`, 'raid', 5000); }
+      else if (ev.why === 'reinf') { ui.toast('Cops down — <b>reinforcements</b> are on their way. Killing cops never clears your stars: run!', 'warn'); }
+      else if (ev.why === 'drop') { ui.toast(`Wanted level dropping: ${'★'.repeat(ev.stars)}`, 'good'); }
+      else if (ev.why === 'faded') { sfx('cup'); ui.alert('The police forgot about you. Wanted level cleared.', 'good'); }
+      else if (ev.stars > 0) { sfx('siren'); ui.alert(`${'★'.repeat(ev.stars)} <b>WANTED</b> — the police are coming! Lose them, or pay them off at the QG (B). If they put you down, you go to prison.`, 'raid', 5000); }
       else if (ev.why === 'bribe') { sfx('cash'); ui.alert('Paid off. The police forget about you... for now.', 'good'); }
       break;
+    // ---- v0.63
+    case 'jail':
+      sfx('siren', ev.x, ev.y);
+      if (ev.id === app.myId) {
+        renderer.screenFlash('#2a4aff', 0.5);
+        enterBarLocal(JAIL_ID); ui.closeModal();
+        ui.alert(`<b>ARRESTED!</b> ${'★'.repeat(ev.stars)} Fine: <b>R$${ev.fine}</b>. ${ev.t}s in the cell block, then you walk out at your base. Wanted level cleared.`, 'raid', 8000);
+        ui.log(`You were arrested and paid R$${ev.fine}.`, 'bad');
+      } else ui.log(`<b>${escapeHtml(ev.name)}</b> was arrested by the police.`, ev.g === myGangId() ? 'bad' : 'info');
+      break;
+    case 'jailout':
+      if (ev.id === app.myId) { app.local.bar = -1; app.trackKey = ''; sfx('door'); ui.alert('Free! The gate opens. Stay out of trouble... or not.', 'good', 4000); }
+      break;
+    case 'aura': {
+      renderer.text(ev.x, ev.y - 34, '6 7!', '#ffd23f', 1.3, -16);
+      for (const id of ev.civs || []) { const c = (app.mode === 'host' ? app.game.civs : client.civs).get(id); if (c && Math.random() < 0.6) renderer.text(c.x, c.y - 30, Math.random() < 0.5 ? '6 7!' : '6... 7!', '#ffffff', 1.1, -14); }
+      renderer.burst(ev.x, ev.y - 20, ['#ffd23f', '#ff3fa4', '#ffffff'], 12, 50, 0.8, 0, true);
+      sfx('dance', ev.x, ev.y);
+      if (ev.id === app.myId) {
+        if (ev.gain > 0) { sfx('cup'); ui.toast(`<b>Farmando aura!</b> +${ev.gain} respect in ${escapeHtml(ev.rn)} (now ${ev.rep}${ev.rep < ev.need ? ` — ${ev.need} to recruit` : ''}).`, 'good'); }
+        else if (ev.n > 0 && ev.full) ui.toast(`The locals of ${escapeHtml(ev.rn)} dance with you. Your respect here is already fine — recruit (G) to earn more.`, 'good');
+      }
+      break;
+    }
+    case 'pray':
+      if (ev.id === app.myId || near(ev.x, ev.y, 220)) { playOrgan(ev.d || 10, ev.id === app.myId ? 1 : 0.5); if (ev.id === app.myId) app.organT = performance.now() / 1000 + (ev.d || 10); }
+      renderer.light(ev.x, ev.y, 110, '#ffd88a', ev.d || 10, 1.0);
+      if (ev.id === app.myId) ui.toast('You kneel and pray with your crew... (10s — getting hurt breaks it)', 'good');
+      break;
+    case 'prayx': if (ev.id === app.myId) { stopOrgan(); app.organT = 0; ui.toast('Your prayer was interrupted.', 'warn'); } break;
+    case 'prayed':
+      renderer.effect({ k: 'pillar', x: ev.x, y: ev.y, c: '#ffd88a', life: 1.2 });
+      renderer.burst(ev.x, ev.y - 20, ['#ffd88a', '#ffffff'], 18, 50, 1.0, -20, true);
+      if (ev.id === app.myId) {
+        sfx('heal');
+        ui.toast(`Amém. You${ev.n ? ' and your crew' : ''} feel better.`, 'good');
+        if (ev.healer) { sfx('levelup'); ui.alert('One of your crew found the faith: they put the gun down and became a <b>HEALER</b>. Every 30s they heal you and the crew around.', 'good', 8000); ui.log('A crew member became a healer (white robe). They no longer fight.', 'good'); }
+      }
+      break;
+    case 'healpulse':
+      renderer.effect({ k: 'ring', x: ev.x, y: ev.y, r: Math.min(90, ev.r), c: '#9affc8', life: 0.7 });
+      renderer.burst(ev.x, ev.y - 14, ['#9affc8', '#ffffff'], 10, 40, 0.8, -20, true);
+      if (near(ev.x, ev.y, 160)) sfx('heal', ev.x, ev.y, 0.6);
+      break;
+    case 'allyreq':
+      if (ev.to !== app.myId) break;
+      sfx('alarm');
+      ui.allyRequest(ev);
+      break;
+    case 'alliance': {
+      for (const r of ev.regs || []) renderer.capture(r, 'g' + ev.a, 'g' + ev.b);
+      const joiner = (ev.ids || []).includes(app.myId), mine = joiner || ev.b === myGangIdx();
+      sfx(mine ? 'capture' : 'cup');
+      ui.alert(`<b style="color:${GANG_COLORS[ev.a]}">${escapeHtml(ev.an)}</b> joined <b style="color:${GANG_COLORS[ev.b]}">${escapeHtml(ev.bn)}</b>! ${joiner ? 'You wear their colors now.' : ev.b === myGangIdx() ? 'Their turf is yours now.' : ''}`, 'good', 8000);
+      ui.log(`Alliance: ${escapeHtml(ev.an)} joined ${escapeHtml(ev.bn)} (${(ev.regs || []).length} districts change colors).`, mine ? 'good' : 'info');
+      break;
+    }
     case 'siren': sfx('siren', ev.x, ev.y); break;
     case 'copsdrop':
       sfx('copsdrop', ev.x, ev.y);
@@ -1121,7 +1190,7 @@ function gameFrame(dt, now) {
     const ox = L.bx, oy = L.by;
     moveInRoom(L, ax.x * speed * dt, ax.y * speed * dt);
     L.moving = Math.abs(L.bx - ox) + Math.abs(L.by - oy) > 0.01;
-    if (L.by > BAR_ROOM.h - 7 && performance.now() / 1000 - L.barT > 0.6) { L.barT = performance.now() / 1000; sendAction({ t: 'barout' }); }
+    if (L.bar !== JAIL_ID && L.by > BAR_ROOM.h - 7 && performance.now() / 1000 - L.barT > 0.6) { L.barT = performance.now() / 1000; sendAction({ t: 'barout' }); }
     setEngine(0);
   } else if (me && !me.dead && !app.typing) {
     const ax = blocked || dancing ? { x: 0, y: 0 } : input.axis();
@@ -1195,7 +1264,12 @@ function gameFrame(dt, now) {
     for (const e of view.enemies) if (Math.abs(e.x - L.x) < 14 * TILE && Math.abs(e.y - L.y) < 10 * TILE) lvl = Math.max(lvl, e.boss ? 2 : 1);
     if (view.raids.some((r) => (r.state === 'active' || r.state === 1) && (view.mode !== 'pvp' || r.g === view.myGang))) lvl = 2;
     app.music.setIntensity(lvl);
-    if (L.bar >= 0) {
+    if (app.organT > performance.now() / 1000) app.music.setIntensity(0);
+    if (L.bar === JAIL_ID) {
+      // the cell block: a slow, dark beat from somebody's radio
+      if (app.trackKey !== 'jail') { app.trackKey = 'jail'; app.music.setTrack('bruxaria', 4242); }
+      app.music.setIntensity(0);
+    } else if (L.bar >= 0) {
       const bar = world.bars[L.bar];
       if (app.trackKey !== 'club' + bar.id) { app.trackKey = 'club' + bar.id; app.music.setTrack('club', bar.seed >>> 0); }
       app.music.setIntensity(0);
@@ -1217,7 +1291,7 @@ function gameFrame(dt, now) {
   });
   const enemiesNear = view.enemies.filter((e) => hostileNear(e.x, e.y)).map((e) => ({ x: e.x, y: e.y, boss: e.boss }));
   const st = isHost ? app.game : null;
-  const gangs = isHost ? [...st.gangs.values()].map((g) => ({ idx: g.idx, name: g.name, base: g.base, vault: g.vault, up: g.upgrades, out: g.out, owned: G.ownedCount(st, g.id) })) : client.rg.gangs;
+  const gangs = isHost ? [...st.gangs.values()].map((g) => ({ idx: g.idx, name: g.name, base: g.base, vault: g.vault, up: g.upgrades, out: g.out, into: g.into ? G.gangIdx(g.into) : undefined, owned: G.ownedCount(st, g.id) })) : client.rg.gangs;
   const myGangObj = gangs.find((g) => g.idx === myG) || gangs[0] || { name: '', vault: 0, up: {} };
   let nearVehicle = null;
   if (me && !me.dead && !me.veh) {
@@ -1239,7 +1313,8 @@ function gameFrame(dt, now) {
     blood: renderer.bloodOn, grenSel: app.grenSel,
     king: isHost ? (st.king ? { r: world.kingId, goal: st.kingGoal, hold: Object.entries(st.kingHold).map(([k, v]) => [k, Math.floor(v)]) } : null) : client.rg.king,
     inBase: inBaseLocal(), nearCompound: nearOwnCompound(), nearVehicle, civPrompt: L.bar >= 0 ? 0 : view.civPrompt, petPrompt: L.bar >= 0 ? '' : view.petPrompt ? view.petKind : '', quality: renderer.quality, ctxHint: contextHint(),
-    barName: L.bar >= 0 ? world.bars[L.bar].name : '',
+    barName: L.bar === JAIL_ID ? 'Presídio' : L.bar >= 0 ? world.bars[L.bar].name : '',
+    priest: view.priest, prayCd: view.prayCd,
     roomCode: app.roomCode, isHost, playerCount: view.players.length, players, enemiesNear, radar: isHost ? st.radar[myGangId()] || [] : client.radar,
     vehicles: view.vehicles.map((v) => ({ x: v.x, y: v.y, charge: v.charge, type: v.type })),
     vehicle: veh ? { type: veh.type, hp: veh.hp, maxHp: veh.maxHp, charge: Math.round(veh.charge), flying: veh.flying, charging: veh.charging, seat: me.seat } : null,
@@ -1264,20 +1339,22 @@ function enterBar() {
 function enterBarLocal(id) {
   const L = app.local;
   L.bar = id; L.bx = BAR_ROOM.door.x; L.by = BAR_ROOM.door.y - 18; L.barT = performance.now() / 1000;
+  if (id === JAIL_ID) { const me = myPrivate(); L.bx = JAIL_ROOM.spawn.x + (Math.random() - 0.5) * 40; L.by = JAIL_ROOM.spawn.y; if (me && me.bx) { L.bx = me.bx; L.by = me.by; } }
   L.wx = L.wy = L.ix = L.iy = 0; L.dashT = 0;
 }
 // player vs the room's furniture (axis-separated box collision, radius 5)
 function moveInRoom(L, dx, dy) {
   const r = 5;
+  const jail = L.bar === JAIL_ID, ROOM = jail ? JAIL_ROOM : BAR_ROOM;
   const hit = (x, y) => {
-    if (x < r || x > BAR_ROOM.w - r || y < r) return true;
-    if (y > BAR_ROOM.h - r && !(x > BAR_ROOM.door.x - 14 && x < BAR_ROOM.door.x + 14)) return true;
-    for (const b of BAR_ROOM.solids) if (x + r > b.x && x - r < b.x + b.w && y + r > b.y && y - r < b.y + b.h) return true;
+    if (x < r || x > ROOM.w - r || y < r) return true;
+    if (y > ROOM.h - r && (jail || !(x > BAR_ROOM.door.x - 14 && x < BAR_ROOM.door.x + 14))) return true;
+    for (const b of ROOM.solids) if (x + r > b.x && x - r < b.x + b.w && y + r > b.y && y - r < b.y + b.h) return true;
     return false;
   };
   if (!hit(L.bx + dx, L.by)) L.bx += dx;
   if (!hit(L.bx, L.by + dy)) L.by += dy;
-  L.by = Math.min(BAR_ROOM.h + 4, L.by);
+  L.by = Math.min(ROOM.h + 4, L.by);
 }
 // ------------------------------------------------------------------ grenades (Z throws at the cursor, C switches type)
 function cycleGrenade() {
@@ -1320,6 +1397,7 @@ function contextSpot() {
   const me = myPrivate();
   if (!me || me.dead || me.veh) return null;
   const L = app.local, world = app.world;
+  if (L.bar === JAIL_ID) return null;
   if (L.bar >= 0) {
     const bar = world.bars[L.bar];
     const K = BAR_ROOM.counter;
@@ -1356,7 +1434,7 @@ function contextHint() {
   if (mate) return me.rv > 0 ? `REVIVING ${mate.name.toUpperCase()}... ${Math.round(me.rv * 100)}%` : `[HOLD E] Revive ${mate.name}`;
   const s = contextSpot();
   if (me && me.emo > 0) return '♪ DANÇANDO... ♪';
-  if (!s) return me && me.bar >= 0 ? 'Walk out through the door (bottom) to leave' : '';
+  if (!s) return me && me.bar === JAIL_ID ? `Prison — the gate opens in ${me.jail || 0}s` : me && me.bar >= 0 ? 'Walk out through the door (bottom) to leave' : '';
   if (s.shop === 'drinks') return `[B] BALCÃO — buy drinks (${s.bar.name})`;
   if (s.shop === 'stims') return '[B] Talk to the dealer — cyber stims (risky)';
   if (s.exit) return 'Walk through the door to go back outside';
@@ -1409,17 +1487,17 @@ function buildView() {
       bar: p.inBar, bx: p.id === 'host' ? L.bx : p.bx, by: p.id === 'host' ? L.by : p.by, emote: p.emoteT > 0 ? p.emote + 1 : 0, ...(() => { const pf = G.profile(p); return { ghost: !!pf.ghost, fury: pf.fury }; })(),
     }));
     enemies = [...g.enemies.values()].map((e) => ({ ...e, burn: e.burnT > 0 }));
-    allies = [...g.allies.values()].filter((a) => !a.hidden).map((a) => ({ id: a.id, x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp, flash: a.flash, moving: a.moving, aim: a.aim, team: G.gangIdx(a.team), follow: a.follow, tier: a.tier, civ: a.civ, melee: a.melee, lvl: a.lvl || 1, rev: a.revT > 0, emote: a.emoteT > 0 ? a.emote + 1 : 0 }));
+    allies = [...g.allies.values()].filter((a) => !a.hidden).map((a) => ({ id: a.id, x: a.x, y: a.y, hp: a.hp, maxHp: a.maxHp, flash: a.flash, moving: a.moving, aim: a.aim, team: G.gangIdx(a.team), follow: a.follow, tier: a.tier, civ: a.civ, melee: a.melee, lvl: a.lvl || 1, rev: a.revT > 0, emote: a.emoteT > 0 ? a.emote + 1 : 0, healer: !!a.healer }));
     pets = [...g.pets.values()].map((a) => ({ id: a.id, x: a.x, y: a.y, kind: a.kind, seed: a.seed, moving: a.moving, flee: a.flee > 0, happy: a.happyT > 0, sit: a.sit, aim: a.aim }));
     ufo = g.ufo ? { id: g.ufo.id, x: g.ufo.x, y: g.ufo.y, state: g.ufo.state, t: g.ufo.t } : null;
     turrets = [...g.turrets.values()].map((t) => ({ id: t.id, x: t.x, y: t.y, aim: t.aim, hp: t.hp, maxHp: t.maxHp, type: t.type, mk: t.mk, team: G.gangIdx(t.team), dead: t.deadT > 0, flash: t.flash > 0 }));
     vehicles = [...g.vehicles.values()].map((v) => ({ id: v.id, type: v.type, x: v.x, y: v.y, hp: v.hp, maxHp: v.maxHp, charge: v.charge, dir: v.dir, flying: v.flying, flash: v.flash > 0, charging: v.charging, team: G.gangIdx(v.team), seats: v.seats, civ: v.civ ? 1 : 0 }));
     pickups = [...g.pickups.values()]; projectiles = g.projectiles;
-    civs = [...g.civs.values()].map((c) => ({ id: c.id, x: c.x, y: c.y, seed: c.seed, flee: c.flee > 0, flash: c.flash > 0, moving: c.moving, aim: c.aim, hpPct: Math.round(100 * c.hp / c.maxHp) }));
+    civs = [...g.civs.values()].map((c) => ({ id: c.id, x: c.x, y: c.y, seed: c.seed, flee: c.flee > 0, flash: c.flash > 0, moving: c.moving, dance: c.danceT > 0, aim: c.aim, hpPct: Math.round(100 * c.hp / c.maxHp) }));
     rs = g.rs; raids = g.raids.filter((r) => !r.kind).map((r) => ({ ...r, g: G.gangIdx(r.gang) })); dayT = g.dayT;
     broken = new Set([...g.brk.entries()].filter(([, s]) => s.deadT > 0).map(([k]) => k));
     waypointsSrc = [...g.players.values()].map((p) => ({ name: p.name, color: p.color, wp: p.wp, g: G.gangIdx(p.gang), me: p.id === 'host' }));
-    pcars = [...g.pcars.values()].map((c) => ({ x: c.x, y: c.y, dir: c.dir, state: c.state === 'in' ? 0 : c.state === 'drop' ? 1 : 2 }));
+    pcars = [...g.pcars.values()].map((c) => ({ x: c.x, y: c.y, dir: c.dir, state: c.state === 'in' ? 0 : c.state === 'drop' ? 1 : c.cruise ? 3 : 2 }));
     helis = [...g.helis.values()].map((h) => ({ x: h.x, y: h.y, aim: h.aim, kind: h.kind, atk: h.state === 'atk' }));
   } else {
     mode = client.mode;
@@ -1459,9 +1537,15 @@ function buildView() {
     let pd = 22 * 22; for (const a of pets) { const d = (a.x - L.x) ** 2 + (a.y - L.y) ** 2; if (d < pd && d <= bd && !a.flee) { pd = d; petPrompt = a.id; petKind = a.kind; } }
     if (petPrompt) civPrompt = 0;
   }
+  let priest = -1;
+  if (meP && !meP.dead && !meP.veh && L.bar < 0 && !(meP.emote > 0)) for (const ch of app.world.churches || []) if ((ch.px - L.x) ** 2 + (ch.py - L.y) ** 2 < (3 * TILE) ** 2) priest = ch.id;
   if (meP && L.bar >= 0) meP.bar = L.bar;
   let interior = null;
-  if (meP && L.bar >= 0) {
+  if (meP && L.bar === JAIL_ID) {
+    const inside = players.filter((p) => p.bar === JAIL_ID && !p.dead).map((p) => (p.id === app.myId ? { ...p, x: L.bx, y: L.by, moving: L.moving } : { ...p, x: p.bx, y: p.by }));
+    const pm = myPrivate();
+    interior = { jail: true, bar: { id: JAIL_ID, seed: 99 }, me: { x: L.bx, y: L.by }, players: inside, prompt: null, left: pm ? pm.jail || 0 : 0 };
+  } else if (meP && L.bar >= 0) {
     const bar = app.world.bars[L.bar];
     const inside = players.filter((p) => p.bar === L.bar && !p.dead).map((p) => (p.id === app.myId ? { ...p, x: L.bx, y: L.by, moving: L.moving } : { ...p, x: p.bx, y: p.by }));
     const spot = contextSpot();
@@ -1470,7 +1554,7 @@ function buildView() {
     interior = { bar, me: { x: L.bx, y: L.by }, players: inside, prompt };
   }
   const prof = myProfile();
-  return { world: app.world, me: meP, meMoving: L.moving, players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, civPrompt, petPrompt, petKind, pets, ufo, rs, raids, gangColor: GANG_COLORS[myG], myGang: myG, mode, dayT, broken, waypoints, pcars, helis, interior, sway: !!(prof && prof.sway) };
+  return { world: app.world, me: meP, meMoving: L.moving, players, enemies, allies, pickups, projectiles, turrets, vehicles, civs, civPrompt, petPrompt, petKind, pets, ufo, rs, raids, gangColor: GANG_COLORS[myG], myGang: myG, mode, dayT, broken, waypoints, pcars, helis, interior, priest, prayCd: (myPrivate() || {}).prayCd || 0, sway: !!(prof && prof.sway) };
 }
 
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }

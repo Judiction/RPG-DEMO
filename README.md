@@ -9,7 +9,7 @@ Runs in the browser. No install, no server: one player hosts and friends join wi
 
 ---
 
-**Version 0.62** — the version is shown on the title screen. Everyone in a room must run the same version
+**Version 0.63** — the version is shown on the title screen. Everyone in a room must run the same version
 (the host refuses friends on another version; refresh with Ctrl+F5). Fixes before a GitHub sync are 0.61, 0.62...
 
 ## How to play
@@ -51,7 +51,7 @@ Next time, the host loads the game from the title screen and friends rejoin as t
 | **1 / 2 / 3** | Use the drink or stim in that belt slot |
 | **Z** | Throw a grenade at the cursor |
 | **C** | Switch grenade type |
-| **T** | Dance (passinho, crip walk or rebolado — you can't move or shoot until it ends). Your crew dances with you |
+| **T** | Dance (passinho, crip walk or rebolado — you can't move or shoot until it ends). Your crew dances with you. Next to locals: the **"6 7!"** dance (wins back respect). Next to a church padre: **pray** |
 | **Esc** | Menu: volume, graphics, blood, **game stats** (your numbers for the whole game, kept in the save) |
 | **TAB** | Territory map: click to place your waypoint, click a district to see / upgrade it |
 | **Enter** | Chat |
@@ -126,6 +126,9 @@ enough **respect** in that district, they join your crew with a pistol or a mach
   Districts your gang controls start friendlier.
 - Civilians run from gunfire and explosions. Stray bullets and blasts can hurt them, and **hurting or killing
   civilians makes the locals hate your gang** for a while — they flee and refuse to join. Respect slowly comes back.
+- **Farmando aura**: press **T** next to locals and you do the **"6 7!"** dance (palms up, hands pumping) — they dance
+  along. If your respect in that district is low, every dance with people around wins some back (more people, more
+  respect), up to *Neutral*. Above that, recruiting is how you earn more.
 - Recruited civilians count toward your crew limit of 4 and are gone for good if they die.
 
 ### Weight and impact
@@ -146,6 +149,10 @@ transformers and cars are great for that.
 - **Lose your main base** and you respawn at your other compounds. **Lose all your turf** and your gang is out —
   you can then **join another gang**.
 - **Win** by being the last gang standing, or by holding **60% of the city**.
+- **Alliances**: ESC → **MAKE ALLIANCE** asks another gang to let yours **join them, for good**. Anyone from that gang
+  can accept. Then every player of your gang takes their colors, and your districts, guards, turrets, vehicles and
+  vault money become theirs — your main base becomes one of their outposts (it keeps its buildings and upgrades).
+  A gang that joined another one doesn't count as beaten, so nobody wins "last gang standing" just by merging.
 
 ### Money, levels and death
 - **Kills pay cash (R$)** to whoever got the kill. Teammates nearby get a 40% share. Crew kills pay their owner half.
@@ -169,8 +176,9 @@ Your QG is an occupied favela block: low brick walls with several alley entrance
 stalls and laundry lines packed around it, and tall brick buildings inside for each shop — **Arsenal, Clínica,
 Armário, Cofre** and the **Garagem** (new vehicles roll out of its door into the parking bay, where they recharge and
 repair fastest). Your gang hangs out there: dancing at the paredão, sitting at plastic tables, guarding the gates. Walk up to a building's door and press **B** to open that shop, or press **B** anywhere
-inside for the full menu. Inside the QG walls you are **safe**: nobody can shoot, enemies and police won't come for you,
-and the cops wait outside. (During a raid on the QG the safe zone switches off — defend it!)
+inside for the full menu. Inside the QG walls you are **safe**: you can't get hurt, enemies and police won't come for
+you, and the cops wait outside. You can still shoot there (target practice). (During a raid on the QG, or with hostiles
+near the walls, the safe zone switches off — defend it!)
 - **ARSENAL** buys new **cyber-arms** (weapons) and upgrades them up to Mk5.
 - **CLÍNICA** installs **body mods**. They change how your character looks and plays:
   *Subdermal Armor* (HP, less damage), *Leg Servos* (speed, Dash), *Nanite Regen* (regen, Nano-Heal),
@@ -195,7 +203,8 @@ and the cops wait outside. (During a raid on the QG the safe zone switches off �
 ### Boca de fumo
 Every gang compound has a **boca** (a small building, or a street stall in tiny compounds). Locals walk in from the
 street, buy, and the money goes straight to the **gang vault**. Friendly locals come more often. Stand at the boca and
-press **B** (or use the compound menu) to upgrade it — up to level 4, with more customers who spend more.
+press **B** (or use the compound menu) to upgrade it — up to level 4, with more customers who spend more. It pays
+well: an upgraded boca early on is one of the best ways to fill the vault.
 
 ### Crew levels
 Your crew (followers) level up with their kills, up to level 5: more health, more damage, faster attacks, and they
@@ -217,9 +226,20 @@ Smaller districts are **gang outposts**: little favela shacks in the corners, bu
   Every 100 heat is a ★, up to 5.
 - Each new star sends the **Polícia Militar 2099** in flying patrol cars. More stars, heavier units: soldiers, shotguns,
   riot squads, police drones and finally the riot mech.
-- Three ways out: **beat the response** (kill every cop that came — stars go to zero), **lose them** (stay far from every cop
-  until the escape bar fills), or **pay them off** at your QG. Stars also fade slowly when nobody is chasing you.
-  Hiding in a bar or at the QG freezes your stars — the cops wait outside.
+- **Killing cops never clears your stars**: when every cop sent after you is down, **reinforcements** come a few
+  seconds later (faster at more stars). Each star also makes the cops tougher.
+- **Lose them**: stay far from every cop until the escape bar fills. They lose you — new waves stop — but **the stars
+  stay** and fade slowly (about a star every 1:30). If a cop or a patrol car **recognizes** you up close, or anyone sees
+  a new crime, the chase is back on.
+- **Pay them off** at your QG (base menu, R$350 per star) — the only instant way out.
+- Dying to anything that isn't the police **keeps** your stars. Hiding in a bar freezes them — the cops wait outside.
+- **Prison**: if the police put you down, they cuff you on the spot (no downed phase). You pay a fine of **R$300 per
+  star** (never more than you carry), your stars are cleared, and you spend **one minute** in the **Presídio Central**
+  cell block — walk around, watch the inmates play ball, dance if you want. Then the gate opens and you walk out at
+  your main base. No XP lost.
+- **Street patrols**: even when nobody is wanted, a few cops walk the sidewalks and a couple of police cars cruise
+  the streets around every player. They leave you alone — but a cop who sees a crime adds stars on the spot and
+  joins in. Attacking a cop makes you wanted right away.
 - Police are tough. At **4 stars** a helicopter with a machine gun comes; at **5 stars**, one with rockets too. They
   can't be shot down: they circle you, open fire for a while, leave, and come back if you're still wanted.
 - Civilians fly their cars over the city. Press **V** next to one to steal it (a crime if anyone sees it).
@@ -280,14 +300,23 @@ Vehicles are parked around the city (they show on the minimap and map). Press **
 | Rocket Arm | explosive rockets |
 | Rail Arm | instant piercing beam |
 | Chain Lightning | a bolt that jumps from enemy to enemy (up to 5), stuns drones |
-| Varginha Ray | **rare** — alien tech, a fast green piercing ray. Never sold: only the last ET of an invasion drops it |
+| Varginha Ray | **rare** — alien tech, a green piercing ray. Never sold: only the last ET of an invasion drops it |
 
 ### Alien invasion (random event)
-Once or twice a game, at a random moment, a **flying saucer** comes for one player: you get a few seconds of warning,
+Once or twice a game, at a random moment, a **flying saucer** comes for the **strongest player** (highest level and
+most kills — if they're hiding in a bar, in prison or safe at home, the ETs wait a bit for them): you get a few seconds of warning,
 then it beams a big squad of **ETs de Varginha** down right around them, hovers for a while and flies away. The saucer
 can't be hurt. The ETs are tough and fight **everyone** — gangs, factions, police, civilians — and bleed green.
 They're worth a lot of XP and cash, and the last one drops the **Varginha Ray** for whoever kills it (or on the
 ground, if a turret or a crew member got it).
+
+### Churches
+A few big **churches** stand around the city: white stone, tall stained-glass windows, a copper dome and a big neon
+cross on top. A **padre** in a white robe waits by the door. Press **T** next to him to **pray** with your crew:
+everyone kneels for 10 seconds while the organ plays (getting hurt breaks it). When the prayer ends, you and the crew
+around you heal. There's a small chance one of your crew **finds the faith**: they put the gun down, wear a white
+robe with a glowing cross and become a **healer** — every 30 seconds they heal you and the crew around them. A healer
+still counts as one of your crew and can die. You can pray again after a minute.
 
 ### Cats and dogs
 Vira-latas and street cats wander around the city, sit, sniff around. Press **G** next to one: it barks or meows.
@@ -305,6 +334,7 @@ They can't be hurt — gunshots and explosions just scare them away for a bit.
   your character shows as an outline.
 - The city is lit by its own lights: streetlights, neon signs (some flicker or change colors), trash fires,
   windows, gunshots and explosions. Days feel like dusk and nights are very dark. Bases are floodlit.
+- Lots of rooftops carry big **neon letters on steel frames** (brands, bars, clubs) that glow at night.
 - On an older laptop, set **ESC → GRAPHICS: LOW** for a faster mode.
 
 ### Tips

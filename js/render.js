@@ -8,7 +8,7 @@
 //   5. bloom, flying vehicles, holograms, silhouettes of players hidden behind buildings, tags and overlays
 // The game is drawn at low resolution (~640 px wide) and scaled up with crisp pixels.
 
-import { TILE, FACTIONS, WEAPONS, GANG_COLORS, VEHICLES, BRANDS, BAR_ROOM, ITEMS, isMech, CREW_WEAPONS, DOWN, GRENADES, ALIENS } from './data.js';
+import { TILE, FACTIONS, WEAPONS, GANG_COLORS, VEHICLES, BRANDS, BAR_ROOM, ITEMS, isMech, CREW_WEAPONS, DOWN, GRENADES, ALIENS, JAIL_ROOM } from './data.js';
 import { T, CHUNK, STATION_COLORS } from './world.js';
 import {
   getTileset, charSprite, armSprite, propSprite, playerSpec, enemySpec, allySpec, followerSpec, civilianSpec, ENEMY_ARM,
@@ -223,6 +223,7 @@ export function createRenderer(canvas) {
     for (const a of view.allies) list.push({ y: a.y, al: a });
     for (const c of view.civs || []) if (inView(c.x, c.y)) list.push({ y: c.y, cv: c });
     for (const a of view.pets || []) if (inView(a.x, a.y)) list.push({ y: a.y, pt: a });
+    for (const ch of world.churches || []) if (inView(ch.px, ch.py)) list.push({ y: ch.py, pr: ch });
     const raised = [];
     for (const t of view.turrets || []) { if (world.tiles[Math.floor(t.y / TILE - 0.2) * world.W + Math.floor(t.x / TILE)] === T.WALL) raised.push(t); else list.push({ y: t.y, tu: t }); }
     const flying = [];
@@ -249,6 +250,7 @@ export function createRenderer(canvas) {
       else if (d.tu) drawTurret(d.tu, view, emq);
       else if (d.ve) drawVehicle(d.ve, view, dt, emq, ox, oy, false);
       else if (d.hg) drawHangout(d.hg, d.own, dt);
+      else if (d.pr) drawPriest(d.pr, view, dt);
     }
     drawWires(world, ox, oy);
     drawGrenades(dt);
@@ -281,6 +283,7 @@ export function createRenderer(canvas) {
     flying.sort((a, b) => a.y - b.y);
     for (const v of flying) drawVehicle(v, view, dt, null, ox, oy, true, amb);
     drawHolograms(world, ox, oy, night);
+    drawRoofSigns(world, ox, oy, night);
     drawBunting(view, ox, oy);
     drawFlags(view, ox, oy, night);
     drawBaseSigns(view, ox, oy, night);
@@ -895,7 +898,19 @@ export function createRenderer(canvas) {
       if (lv >= 5 && Math.random() < 0.08) R.particles.push({ x: al.x + (Math.random() - 0.5) * 8, y: al.y - Math.random() * 16, vx: 0, vy: -14, life: 0.5, t: 0, c: gc, g: 0, sz: 1, em: true });
     }
     else { spec = specFor('A' + (al.id % 4) + gc, () => allySpec(gc, al.id % 4)); weapon = 'pistol'; }
+    if (al.healer) {
+      const base = spec;
+      spec = specFor('HL' + JSON.stringify(base), () => Object.assign({}, base, { top: '#f2f0ea', top2: '#d8d4c8', pants: '#ece8de', armor: 0, visor: null, mask: null, band: '#ffd88a', chromeLegs: false, kneeGlow: false, chains: false }));
+    }
     if (al.emote) { const s0 = drawDancer('a' + al.id, al.x, al.y, spec, al.emote - 1, dt, al.id % 5); al._top = s0.top; return; }
+    if (al.healer) {
+      const s1 = drawCharacter('a' + al.id, al.x, al.y, al.aim, spec, null, dt, { flash: al.flash > 0, moving: al.moving });
+      al._top = s1.top;
+      const cy = Math.round(al.y - s1.top * 0.55), cx = Math.round(al.x);
+      ctx.fillStyle = '#ffd23f'; ctx.fillRect(cx, cy - 2, 1, 5); ctx.fillRect(cx - 1, cy - 1, 3, 1);
+      if (Math.random() < 0.07) R.particles.push({ x: al.x + (Math.random() - 0.5) * 8, y: al.y - Math.random() * 16, vx: 0, vy: -12, life: 0.7, t: 0, c: '#9affc8', g: 0, sz: 1, em: true });
+      return;
+    }
     const s = drawCharacter('a' + al.id, al.x, al.y, al.aim, spec, [{ slot: 'R', kind: weapon, color: al.civ ? '#8a8494' : shade(spec.top, -0.1) }], dt, { flash: al.flash > 0, moving: al.moving });
     al._top = s.top;
     if (al.hp < al.maxHp * 0.35) drip(al.x, al.y, dt, false);
@@ -919,6 +934,7 @@ export function createRenderer(canvas) {
 
   function drawCiv(c, view, dt) {
     const spec = specFor('C' + c.seed, () => civilianSpec(c.seed));
+    if (c.dance) { const s0 = drawDancer('c' + c.id, c.x, c.y, spec, 3, dt, c.id % 7); c._top = s0.top; return; }
     const s = drawCharacter('c' + c.id, c.x, c.y, c.aim, spec, null, dt, { flash: c.flash, moving: c.moving });
     c._top = s.top;
     if (c.hpPct < 35) drip(c.x, c.y, dt, false);
@@ -1083,6 +1099,72 @@ export function createRenderer(canvas) {
       for (let i = 0; i < 8; i++) ctx.fillRect(Math.round(hx - i * 1.2), Math.round(hy - i * 1.4), Math.max(1, Math.round(i * 2.4)), 2);
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = 'source-over';
+    }
+  }
+
+  // neon letters standing on steel frames on the roofs (letreiros), and the big neon cross on top of each church
+  const roofCache = new Map();
+  function roofSignSprite(sg, alt) {
+    const key = sg.kind + (sg.text || sg.brand) + ':' + alt;
+    let c = roofCache.get(key);
+    if (c) return c;
+    if (sg.kind === 'cross') {
+      const w = 15, h = 30;
+      c = mk(w, h);
+      const g = c.getContext('2d');
+      const F = (x, y, ww, hh, col) => { g.fillStyle = col; g.fillRect(x, y, ww, hh); };
+      F(5, 0, 5, 24, '#2a2236'); F(0, 5, 15, 5, '#2a2236');                     // the frame
+      const col = alt ? '#ffffff' : '#ffd23f';
+      F(6, 1, 3, 22, col); F(1, 6, 13, 3, col);
+      F(7, 2, 1, 20, '#ffffff'); F(2, 7, 11, 1, '#ffffff');
+      F(6, 23, 3, 7, '#5a5664'); F(4, 28, 7, 2, '#3a3646');                    // the post on the dome
+      roofCache.set(key, c);
+      c.ax = 7; c.ay = 30;
+      return c;
+    }
+    const B = sg.brand >= 0 ? BRANDS[sg.brand] : { name: sg.text || 'BAR', c: '#ff3fa4', c2: '#22e5ff' };
+    let word = (sg.text || B.name).toUpperCase();
+    const maxCh = Math.max(3, Math.floor((sg.maxW || 60) / 6));
+    if (word.length > maxCh) word = word.split(/[ .]/)[0].slice(0, maxCh);
+    const col = alt ? (B.c2 || B.c) : B.c;
+    const t = textSprite(word, col, null);
+    const w = t.width * 2 + 6, h = t.height * 2 + 13;
+    c = mk(w, h);
+    const g = c.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    // steel frame: two legs and a cross bar, under big letters (scaled x2)
+    g.fillStyle = '#3a3646'; g.fillRect(3, h - 9, 1, 9); g.fillRect(w - 4, h - 9, 1, 9); g.fillRect(2, h - 7, w - 4, 1);
+    for (let x = 6; x < w - 6; x += 6) g.fillRect(x, h - 9, 1, 3);
+    g.fillStyle = 'rgba(10,6,20,0.85)'; g.fillRect(1, 1, w - 2, t.height * 2 + 3);
+    g.drawImage(t, 3, 2, t.width * 2, t.height * 2);
+    g.fillStyle = col; g.fillRect(1, t.height * 2 + 4, w - 2, 1);
+    c.ax = w >> 1; c.ay = h;
+    roofCache.set(key, c);
+    return c;
+  }
+  function drawRoofSigns(world, ox, oy, night) {
+    if (!world.roofGrid) return;
+    const gx0 = Math.max(0, Math.floor((ox - 120) / CH_PX)), gx1 = Math.min(world.gridW - 1, Math.floor((ox + R.vw + 120) / CH_PX));
+    const gy0 = Math.max(0, Math.floor((oy - 120) / CH_PX)), gy1 = Math.min(world.gridH - 1, Math.floor((oy + R.vh + 140) / CH_PX));
+    const scx = ox + R.vw / 2, scy = oy + R.vh / 2;
+    for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) for (const sg of world.roofGrid[gy * world.gridW + gx]) {
+      const k = projK(sg.z || 40);
+      const hx = scx + (sg.x - scx) * k, hy = scy + (sg.y - scy) * k;
+      if (hx < ox - 80 || hx > ox + R.vw + 80 || hy < oy - 60 || hy > oy + R.vh + 80) continue;
+      const st = sg.kind === 'cross' ? Math.floor(R.time / 1.6 + sg.seed) % 2 : sg.anim === 'chase' ? Math.floor(R.time * 1.5 + sg.seed) % 2 : 0;
+      const off = sg.anim === 'flicker' && hash2(Math.floor(R.time * 9 + sg.seed), 3, sg.seed) < 0.12;
+      const s = roofSignSprite(sg, st);
+      const x = Math.round(hx - s.ax), y = Math.round(hy - s.ay);
+      ctx.globalAlpha = off ? 0.35 : 1;
+      ctx.drawImage(s, x, y);
+      if (!off) {
+        // neon glow
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.18 + 0.32 * night;
+        ctx.drawImage(s, x - 1, y); ctx.drawImage(s, x + 1, y); ctx.drawImage(s, x, y - 1);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -1278,6 +1360,10 @@ export function createRenderer(canvas) {
           if ((a.lvl || 1) > 1) drawText(ctx, '*'.repeat(a.lvl - 1), a.x, top - 12, '#ffd23f');
         }
         if (a.hp < a.maxHp || hostile) hpBar(a.x, top - 1, 12, a.hp / a.maxHp, hostile ? '#ff3b5c' : gc);
+      } else if (d.pr) {
+        const ch = d.pr, top = ch.py - (ch._top || 24);
+        if (view.priest === ch.id) drawText(ctx, view.prayCd > 0 ? `PRAY AGAIN IN ${view.prayCd}s` : '[T] PRAY', ch.px, top - 9, view.prayCd > 0 ? '#9a8cc0' : Math.floor(R.time * 3) % 2 ? '#ffd23f' : '#ffffff');
+        else if (view.me && Math.abs(view.me.x - ch.px) < 9 * TILE && Math.abs(view.me.y - ch.py) < 7 * TILE) drawText(ctx, 'PADRE', ch.px, top - 9, '#ffd88a');
       } else if (d.pt) {
         if (view.petPrompt === d.pt.id) drawText(ctx, '[G]', d.pt.x, d.pt.y - (d.pt._top || 14) - 4, Math.floor(R.time * 3) % 2 ? '#ffd23f' : '#ffffff');
       } else if (d.cv) {
@@ -1660,7 +1746,7 @@ export function createRenderer(canvas) {
   function drawPoliceCar(c, view, ox, oy, amb) {
     if (c.x < ox - 100 || c.x > ox + R.vw + 100 || c.y < oy - 100 || c.y > oy + R.vh + 100) return;
     const scx = ox + R.vw / 2, scy = oy + R.vh / 2;
-    const alt = c.state === 1 ? 10 : 24;
+    const alt = c.state === 1 ? 10 : c.state === 3 ? 30 : 24;
     const k = projK(alt);
     const X = scx + (c.x - scx) * k, Y = scy + (c.y - scy) * k;
     shadow(c.x, c.y, 14, 0.3);
@@ -1669,9 +1755,10 @@ export function createRenderer(canvas) {
     ctx.drawImage(s, Math.round(X - s.ax), Math.round(Y - alt - s.ay));
     try { ctx.filter = 'none'; } catch { /* ignore */ }
     if (s.em) ctx.drawImage(s.em, Math.round(X - s.ax), Math.round(Y - alt - s.ay));
-    const on = Math.floor(R.time * 8) % 2;
+    const on = Math.floor(R.time * (c.state === 3 ? 3 : 8)) % 2;
     ctx.fillStyle = on ? '#ff3b3b' : '#3a5aff'; ctx.fillRect(Math.round(X - 5), Math.round(Y - alt - s.ay + 2), 4, 2);
     ctx.fillStyle = on ? '#3a5aff' : '#ff3b3b'; ctx.fillRect(Math.round(X + 1), Math.round(Y - alt - s.ay + 2), 4, 2);
+    if (c.state === 3) return;                       // just cruising: no siren
     ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = 0.5;
     pixCircle(c.x, c.y, 14 + (R.time * 20) % 6, on ? '#ff3b3b' : '#3a5aff', 0.5);
@@ -1681,7 +1768,10 @@ export function createRenderer(canvas) {
   R.policeLights = (view) => {
     const out = [];
     const on = Math.floor(R.time * 8) % 2;
-    for (const c of view.pcars || []) { out.push({ x: c.x - 10, y: c.y, r: 90, c: on ? '#ff2a2a' : '#2a4aff', i: 1.1, bloom: true }); out.push({ x: c.x + 10, y: c.y, r: 70, c: on ? '#2a4aff' : '#ff2a2a', i: 0.9, bloom: true }); }
+    for (const c of view.pcars || []) {
+      if (c.state === 3) { const s2 = Math.floor(R.time * 3) % 2; out.push({ x: c.x, y: c.y, r: 50, c: s2 ? '#ff2a2a' : '#2a4aff', i: 0.6 }); continue; }
+      out.push({ x: c.x - 10, y: c.y, r: 90, c: on ? '#ff2a2a' : '#2a4aff', i: 1.1, bloom: true }); out.push({ x: c.x + 10, y: c.y, r: 70, c: on ? '#2a4aff' : '#ff2a2a', i: 0.9, bloom: true });
+    }
     for (const e of view.enemies) if (e.faction === 3 && Math.random() < 0.5) out.push({ x: e.x, y: e.y - 14, r: 26, c: (Math.floor(R.time * 6) + e.id) % 2 ? '#ff2a2a' : '#2a4aff', i: 0.6 });
     return out;
   };
@@ -2005,6 +2095,19 @@ export function createRenderer(canvas) {
     if (h.kind === 'lean' && Math.random() < 0.01) R.smoke(h.x + 4, h.y - 16, '#c8c0d0', 1, -10, 1.2);
   }
 
+  // the padre in front of each church: white robe, a golden stole, a cross; turns to bless whoever comes close
+  function drawPriest(ch, view, dt) {
+    const spec = specFor('PR' + ch.id, () => Object.assign(civilianSpec(ch.id * 131 + 7), { top: '#f6f4ee', top2: '#e2ded2', pants: '#f0ece2', hat: null, cap: null, band: '#ffd23f', mask: null, visor: null }));
+    const me = view.me;
+    const close = me && Math.abs(me.x - ch.px) < 3 * TILE && Math.abs(me.y - ch.py) < 3 * TILE;
+    const aim = close ? Math.atan2(me.y - ch.py, me.x - ch.px) : [Math.PI / 2, 0, Math.PI, Math.PI / 2][Math.floor(R.time * 0.3 + ch.id) % 4];
+    const s = drawCharacter('pr' + ch.id, ch.px, ch.py, aim, spec, null, dt, { moving: false });
+    ch._top = s.top;
+    const cy = Math.round(ch.py - s.top * 0.55), cx = Math.round(ch.px);
+    ctx.fillStyle = '#ffd23f'; ctx.fillRect(cx, cy - 2, 1, 5); ctx.fillRect(cx - 1, cy - 1, 3, 1);
+    if (Math.random() < 0.03) R.particles.push({ x: ch.px + (Math.random() - 0.5) * 8, y: ch.py - s.top, vx: 0, vy: -10, life: 0.9, t: 0, c: '#ffd88a', g: 0, sz: 1, em: true });
+  }
+
   // ---------------------------------------------------------------- dancing (emote and the bar crowd)
   // style 0: passinho (fast footwork), 1: crip walk (side to side), 2: rebolado (shake it)
   function drawDancer(key, x, y, spec, style, dt, phase = 0) {
@@ -2013,7 +2116,33 @@ export function createRenderer(canvas) {
     let dir = 0, frame = 0, dx = 0, dy = 0, sxs = 1;
     if (style === 0) { frame = 1 + (Math.floor(t * 12) % 4); dir = Math.floor(t * 2) % 2 ? 0 : (Math.floor(t * 4) % 2 ? 1 : 2); dy = -Math.abs(Math.sin(t * 10)) * 2; dx = Math.sin(t * 6) * 1.5; }
     else if (style === 1) { dir = Math.floor(t * 3) % 2 ? 1 : 2; frame = Math.floor(t * 6) % 2 ? 1 : 3; dx = Math.sin(t * 3 * Math.PI) * 3; dy = -Math.abs(Math.sin(t * 6)); }
-    else { dir = 3; dx = Math.sin(t * 22) * 1.2; sxs = 1 + Math.sin(t * 22) * 0.12; dy = Math.sin(t * 11) * 0.8 + 1; }
+    else if (style === 2) { dir = 3; dx = Math.sin(t * 22) * 1.2; sxs = 1 + Math.sin(t * 22) * 0.12; dy = Math.sin(t * 11) * 0.8 + 1; }
+    else if (style === 3) {
+      // "6 7!": facing you, palms up, hands pumping up and down in turns
+      const s = charSprite(spec, 0, 0);
+      const bob = -Math.abs(Math.sin(t * 9)) * 1.2;
+      shadow(x, y, Math.max(4, Math.round(s.width * 0.3)));
+      ctx.drawImage(s, Math.round(x - s.ax), Math.round(y - s.ay + bob));
+      const ph = Math.sin(t * 10), sy = y - s.top * 0.52 + bob, skin = spec.skin || '#c88a5a';
+      for (const [hx, o] of [[x - 6, ph], [x + 5, -ph]]) {
+        const hy = Math.round(sy - 2 + o * 3);
+        ctx.fillStyle = shade(spec.top || '#888', -0.1); ctx.fillRect(Math.round(hx + (hx < x ? 1 : -1)), Math.round(Math.min(hy, sy)), 1, Math.abs(Math.round(sy - hy)) + 1);
+        ctx.fillStyle = skin; ctx.fillRect(Math.round(hx), hy - 1, 2, 2);
+      }
+      if (Math.random() < 0.04) R.particles.push({ x: x + (Math.random() - 0.5) * 10, y: y - s.top, vx: (Math.random() - 0.5) * 10, vy: -22, life: 0.8, t: 0, c: '#ffd23f', g: 0, sz: 2, em: true });
+      return s;
+    } else {
+      // praying: kneeling, back to the camera (facing the church), a soft golden glow rising
+      const s = charSprite(spec, 3, 0);
+      shadow(x, y, Math.max(4, Math.round(s.width * 0.3)));
+      ctx.save();
+      ctx.translate(Math.round(x), Math.round(y + 1));
+      ctx.scale(1, 0.78);
+      ctx.drawImage(s, -s.ax, -s.ay);
+      ctx.restore();
+      if (Math.random() < 0.06) R.particles.push({ x: x + (Math.random() - 0.5) * 8, y: y - s.top * 0.8, vx: 0, vy: -16, life: 1.1, t: 0, c: Math.random() < 0.5 ? '#ffd88a' : '#ffffff', g: 0, sz: 1, em: true });
+      return s;
+    }
     const s = charSprite(spec, dir, frame);
     shadow(x, y, Math.max(4, Math.round(s.width * 0.3)));
     ctx.save();
@@ -2087,7 +2216,127 @@ export function createRenderer(canvas) {
     return npcs;
   }
 
+  // the cell block: six cells, tables, the guard desk, a small yard. Orange jumpsuits for everyone.
+  let jailBg = null;
+  function jailRoom() {
+    if (jailBg) return jailBg;
+    const J = JAIL_ROOM, W = J.w, H = J.h;
+    const c = mk(W, H), g = c.getContext('2d');
+    const P = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(Math.round(x), Math.round(y), w, h); };
+    let sd = 991; const rnd = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+    // floor: worn grey concrete with a painted yellow line
+    P(0, 0, W, H, '#4a4c54');
+    for (let y = 0; y < H; y += 16) for (let x = 0; x < W; x += 16) { P(x, y, 15, 15, rnd() < 0.5 ? '#4e5058' : '#484a52'); if (rnd() < 0.1) P(x + rnd() * 12, y + rnd() * 12, 3, 2, '#3e4048'); }
+    for (let x = 20; x < W - 20; x += 8) P(x, 108, 5, 2, '#c8a83a');
+    // the yard: green court, white lines, a hoop
+    const Y = J.yard;
+    P(Y.x, Y.y, Y.w, Y.h, '#3a6a4a'); P(Y.x, Y.y, Y.w, 1, '#e8e8e0'); P(Y.x, Y.y, 1, Y.h, '#e8e8e0');
+    for (let a = 0; a < 40; a++) { const an = a / 40 * Math.PI; P(Y.x + Y.w / 2 + Math.cos(an) * 30, Y.y + Math.sin(an) * 30, 1, 1, '#e8e8e0'); }
+    P(Y.x + Y.w / 2 - 6, Y.y + 2, 12, 2, '#e8e8e0'); P(Y.x + Y.w / 2 - 3, Y.y + 4, 6, 3, '#ff8a3d');
+    // walls: concrete with stains
+    P(0, 0, W, 16, '#6a6c74'); for (let x = 0; x < W; x += 24) P(x, 0, 1, 16, '#5a5c64');
+    P(0, 0, 16, H, '#5e6068'); P(W - 16, 0, 16, H, '#5e6068'); P(0, H - 16, W, 16, '#5e6068');
+    for (let i = 0; i < 14; i++) P(16 + rnd() * (W - 40), 2 + rnd() * 10, 1, 4 + rnd() * 6, 'rgba(0,0,0,0.25)');
+    // the gate (bars) at the bottom
+    const G2 = J.gate; P(G2.x, G2.y, G2.w, 16, '#2a2c34'); for (let x = G2.x + 2; x < G2.x + G2.w; x += 4) P(x, G2.y, 2, 16, '#9aa0aa');
+    // cells: back wall, bunk, toilet, bars with the open door
+    for (const C of J.cells) {
+      P(C.x, C.y, C.w, C.h, '#55575f');
+      P(C.x + 4, C.y + 6, 26, 12, '#7a5a3a'); P(C.x + 5, C.y + 7, 24, 9, '#c8c0b0'); P(C.x + 5, C.y + 7, 6, 4, '#f0ece2');   // bunk + pillow
+      P(C.x + C.w - 14, C.y + 8, 9, 9, '#e8e8f0'); P(C.x + C.w - 12, C.y + 10, 5, 5, '#a8b0c0');                               // toilet
+      if (rnd() < 0.6) { P(C.x + 36, C.y + 4, 8, 10, ['#ff3f8e', '#ffd23f', '#22e5ff'][(rnd() * 3) | 0]); P(C.x + 37, C.y + 6, 6, 1, '#202028'); }   // poster
+      for (let k = 0; k < 6; k++) P(C.x + 3 + rnd() * (C.w - 8), C.y + 22 + rnd() * 50, 1, 2, '#3a3c44');                       // tally marks
+    }
+    for (const b of J.solids) if (b.h === 84) P(b.x, b.y, b.w, b.h, '#6a6c74');
+    for (const b of J.solids) if (b.h === 4) { P(b.x, b.y, b.w, b.h, '#2a2c34'); for (let x = b.x; x < b.x + b.w; x += 3) P(x, b.y - 30, 1, 34, '#a0a6b0'); }
+    // tables, the guard desk, the weights bench
+    for (const T of J.tables) { P(T.x, T.y, T.w, T.h, '#8a8c94'); P(T.x, T.y, T.w, 2, '#a8aab2'); P(T.x - 2, T.y - 6, T.w + 4, 3, '#6a6c74'); P(T.x - 2, T.y + T.h + 3, T.w + 4, 3, '#6a6c74'); P(T.x + 8, T.y + 5, 6, 4, '#f0ece2'); P(T.x + 24, T.y + 6, 5, 3, '#ff3b3b'); }
+    const D = J.desk; P(D.x, D.y, D.w, D.h, '#3a3e5a'); P(D.x, D.y, D.w, 2, '#5a5e7a'); P(D.x + 8, D.y + 4, 14, 9, '#1a1e2a'); P(D.x + 9, D.y + 5, 12, 6, '#3a8aff');
+    const Bn = J.bench; P(Bn.x, Bn.y, Bn.w, Bn.h, '#2a2a32'); P(Bn.x - 4, Bn.y - 6, Bn.w + 8, 2, '#c8c8d0'); P(Bn.x - 7, Bn.y - 9, 4, 8, '#2a2a32'); P(Bn.x + Bn.w + 3, Bn.y - 9, 4, 8, '#2a2a32');
+    jailBg = c;
+    return c;
+  }
+  const jailNPCs = (() => {
+    const out = [];
+    const J = JAIL_ROOM;
+    let sd = 4242; const rnd = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+    for (const C of J.cells) if (rnd() < 0.55) out.push({ kind: 'sit', x: C.x + 18, y: C.y + 22, seed: (rnd() * 1e5) | 0, dir: 0 });
+    out.push({ kind: 'cards', x: J.tables[0].x - 6, y: J.tables[0].y + 10, seed: 11, dir: 2 }, { kind: 'cards', x: J.tables[0].x + J.tables[0].w + 6, y: J.tables[0].y + 10, seed: 12, dir: 1 });
+    out.push({ kind: 'push', x: J.yard.x + 30, y: J.yard.y + 70, seed: 13 }, { kind: 'walk', x: 200, y: 260, seed: 14, x0: 120, x1: 300 }, { kind: 'walk', x: 400, y: 140, seed: 15, x0: 330, x1: 500 });
+    out.push({ kind: 'ball', x: J.yard.x + J.yard.w / 2, y: J.yard.y + 40, seed: 16 });
+    out.push({ kind: 'guard', x: J.desk.x + 30, y: J.desk.y - 6, seed: 17 }, { kind: 'guard', x: J.gate.x - 14, y: J.gate.y - 6, seed: 18 }, { kind: 'guard', x: J.gate.x + J.gate.w + 14, y: J.gate.y - 6, seed: 19 });
+    return out;
+  })();
+  const jumpsuit = (spec) => Object.assign({}, spec, { top: '#ff7a1a', top2: '#e8600a', pants: '#ff7a1a', armor: 0, visor: null, mask: null, chromeLegs: false, kneeGlow: false, chains: false });
+  function drawJail(view, dt) {
+    const I = view.interior, J = JAIL_ROOM;
+    const W = J.w, H = J.h;
+    const me = I.me;
+    let offX = Math.round((R.vw - W) / 2), offY = Math.round(Math.min((R.vh - H) / 2, 4));
+    if (R.vw < W) offX = Math.round(Math.max(R.vw - W, Math.min(0, R.vw / 2 - me.x)));
+    if (R.vh < H) offY = Math.round(Math.max(R.vh - H, Math.min(0, R.vh / 2 - me.y)));
+    const t = R.time;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+    ctx.fillStyle = '#05030a'; ctx.fillRect(0, 0, R.vw, R.vh);
+    ctx.translate(offX, offY);
+    ctx.drawImage(jailRoom(), 0, 0);
+    const list = [];
+    for (const n of jailNPCs) list.push({ y: n.y, n });
+    for (const p of I.players) list.push({ y: p.y, p });
+    list.sort((a, b) => a.y - b.y);
+    for (const d of list) {
+      if (d.n) {
+        const n = d.n;
+        if (n.kind === 'guard') {
+          const spec = specFor('JG' + n.seed, () => Object.assign(civilianSpec(n.seed), { top: '#22306a', top2: '#1a2450', pants: '#1a1e2a', cap: '#22306a' }));
+          const look = Math.floor(t * 0.4 + n.seed) % 4;
+          drawCharacter('jg' + n.seed, n.x, n.y, [Math.PI / 2, 0, Math.PI, -Math.PI / 2][look], spec, [{ slot: 'R', kind: 'pistol', color: '#3a3646' }], dt, { moving: false });
+          continue;
+        }
+        const spec = specFor('JI' + n.seed, () => jumpsuit(civilianSpec(n.seed * 7 + 3)));
+        if (n.kind === 'walk') {
+          const span = n.x1 - n.x0, ph = (t * 18 + n.seed * 7) % (span * 2), x = n.x0 + (ph < span ? ph : span * 2 - ph);
+          drawCharacter('jw' + n.seed, x, n.y, ph < span ? 0 : Math.PI, spec, null, dt, { moving: true });
+        } else if (n.kind === 'push') {
+          const s = charSprite(spec, 1, 0), up = Math.sin(t * 4) > 0;
+          ctx.save(); ctx.translate(Math.round(n.x), Math.round(n.y)); ctx.rotate(Math.PI / 2 * (up ? 0.82 : 0.95)); ctx.drawImage(s, -s.ax, -s.ay); ctx.restore();
+        } else if (n.kind === 'ball') {
+          const bx = n.x + Math.sin(t * 1.3) * 30, by = n.y + 10;
+          drawCharacter('jb' + n.seed, bx, by, -Math.PI / 2, spec, null, dt, { moving: Math.abs(Math.cos(t * 1.3)) > 0.3 });
+          const bb = Math.abs(Math.sin(t * 7)) * 8;
+          ctx.fillStyle = '#ff8a3d'; ctx.fillRect(Math.round(bx + 5), Math.round(by - 4 - bb), 3, 3);
+        } else { const s = charSprite(spec, n.dir || 0, 0); ctx.drawImage(s, Math.round(n.x - s.ax), Math.round(n.y - s.ay + 2)); }
+      } else {
+        const p = d.p;
+        const spec = jumpsuit(playerSpecOf(p, view));
+        if (p.emote) drawDancer('pj' + p.id, p.x, p.y, spec, p.emote - 1, dt);
+        else drawCharacter('pj' + p.id, p.x, p.y, p.aim, spec, null, dt, { moving: p.moving });
+      }
+    }
+    // lighting: cold fluorescent tubes, one flickering
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const lights = [];
+    for (let i = 0; i < 6; i++) lights.push({ x: 72 + i * 80, y: 60, r: 70, c: '#d8e8ff', i: i === 3 && Math.floor(t * 9) % 7 === 0 ? 0.2 : 0.9 });
+    for (const [x, y] of [[140, 170], [300, 220], [425, 230], [60, 250], [272, 270]]) lights.push({ x, y, r: 110, c: '#c8d8f0', i: 0.8 });
+    lights.push({ x: J.desk.x + 15, y: J.desk.y + 8, r: 40, c: '#3a8aff', i: 0.9 });
+    for (const p of I.players) lights.push({ x: p.x, y: p.y - 6, r: 40, c: '#ffe6c8', i: 0.4 });
+    applyLighting(lights, [0.36, 0.38, 0.46], -offX, -offY);
+    ctx.translate(offX, offY);
+    drawText(ctx, 'PRESIDIO CENTRAL', W / 2, 4, '#ffd23f');
+    drawText(ctx, I.left > 0 ? `PORTAO ABRE EM ${I.left}s` : 'PORTAO ABRINDO', J.gate.x + J.gate.w / 2, H - 12, Math.floor(t * 2) % 2 ? '#ff3b5c' : '#ffd23f');
+    drawParticles(dt, 'em');
+    for (const p of I.players) drawText(ctx, p.name, p.x, p.y - 30, p.color || '#fff');
+    drawTexts(dt);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const vg = ctx.createRadialGradient(R.vw / 2, R.vh / 2, R.vh * 0.35, R.vw / 2, R.vh / 2, R.vh * 0.95);
+    vg.addColorStop(0, 'rgba(5,2,15,0)'); vg.addColorStop(1, 'rgba(5,2,15,0.55)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, R.vw, R.vh);
+    R.interiorOff = { x: offX, y: offY };
+  }
+
   function drawInterior(view, dt) {
+    if (view.interior.jail) return drawJail(view, dt);
     const I = view.interior, bar = I.bar;
     const W = BAR_ROOM.w, H = BAR_ROOM.h;
     const me = I.me;

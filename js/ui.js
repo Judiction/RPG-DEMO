@@ -534,12 +534,15 @@ export function createUI(root, cb) {
       for (let i = 0; i < 5; i++) st += i < full ? '<i class="st on">★</i>' : i === full && part > 0 ? `<i class="st part" style="--p:${Math.round(part * 100)}%">★</i>` : '<i class="st">★</i>';
       let sub = '';
       if (me.bar >= 0) sub = 'hiding in the bar — the cops wait outside';
+      else if (me.lost) sub = 'they lost you — the stars fade slowly. Stay away from cops';
       else if (me.safe) sub = 'safe at the QG — pay them off in the base menu (B)';
-      else if (me.cops > 0) sub = me.esc > 0 ? `losing them... ${Math.round(100 * me.esc / WANTED.escapeTime)}%` : 'police response — fight or run';
+      else if (me.cops > 0 && me.reinf >= 0) sub = `cops down — reinforcements in ${me.reinf}s. RUN!`;
+      else if (me.cops > 0) sub = me.esc > 0 ? `losing them... ${Math.round(100 * me.esc / WANTED.escapeTime)}%` : 'police chase — run to lose them';
       else sub = 'witnesses saw you';
       wh = `<div class="wstars ${me.cops > 0 ? 'hot' : ''}">${st}</div><div class="wsub">${sub}</div>`;
       if (me.cops > 0 && me.esc > 0) wh += `<div class="bar esc"><div class="fill" style="width:${Math.min(100, 100 * me.esc / WANTED.escapeTime).toFixed(0)}%"></div></div>`;
-    } else if (me.safe) wh = '<div class="wsub safe">SAFE ZONE — weapons holstered</div>';
+    } else if (me.jail > 0) wh = `<div class="wsub hot">PRISON — the gate opens in ${me.jail}s</div>`;
+    else if (me.safe) wh = '<div class="wsub safe">SAFE ZONE — you can\'t get hurt here</div>';
     const we = $('#wanted'); if (we._h !== wh) { we.innerHTML = wh; we._h = wh; }
     // vehicle panel
     const vp = $('#veh');
@@ -641,7 +644,7 @@ export function createUI(root, cb) {
     if (s.mode === 'pvp') {
       const gangs = s.gangs.slice().sort((a, b) => b.owned - a.owned);
       if (!s.king) html += `<div class="turf-row"><small>WIN: ${Math.ceil(total * PVP_WIN_SHARE)} districts or last gang</small></div>`;
-      for (const g of gangs) html += `<div class="turf-row"><b style="color:${GANG_COLORS[g.idx]}">${g.idx === s.myGang ? '▶ ' : ''}${esc(g.name)}</b> <span>${g.out ? '<span class="bad">OUT</span>' : `${g.owned}/${total}`}</span></div>`;
+      for (const g of gangs) html += `<div class="turf-row"><b style="color:${GANG_COLORS[g.idx]}">${g.idx === s.myGang ? '▶ ' : ''}${esc(g.name)}</b> <span>${g.into !== undefined ? `<span style="color:${GANG_COLORS[g.into]}">JOINED</span>` : g.out ? '<span class="bad">OUT</span>' : `${g.owned}/${total}`}</span></div>`;
     } else {
       const owned = s.rs.filter((r) => r.owner === my).length;
       html += `<div class="turf-row"><b style="color:${s.gangColor}">${esc(s.gangName)}</b> <span>${owned}/${total}</span></div>`;
@@ -1165,11 +1168,12 @@ export function createUI(root, cb) {
           <p><b>Q / Space / Shift</b> dash · <b>E</b> nano-heal · <b>R</b> cloak · <b>F</b> shield</p>
           <p><b>V</b> get in / out of a flying vehicle · <b>G</b> recruit a local (or pet a cat / dog) · <b>B</b> base or compound menu (stand at a QG building to open its shop)</p>
           <p>At 0 HP you go <b>down</b>: crawl and wait for a gang-mate to hold <b>E</b> next to you (1:30 before you die, <b>X</b> to give up). Dying costs 25% of your cash and part of your XP.</p>
-          <p><b>E</b> at a bar door to go in · <b>B</b> at the counter or the dealer · <b>1 2 3</b> use belt items · <b>T</b> dance</p>
-          <p>Crimes that people see raise your <b>wanted stars</b>. Lose the cops, beat their response, or pay them off at the QG. Inside the QG walls nobody can shoot.</p>
+          <p><b>E</b> at a bar door to go in · <b>B</b> at the counter or the dealer · <b>1 2 3</b> use belt items · <b>T</b> dance (next to locals: <b>6 7!</b> wins back respect · next to a church padre: <b>pray</b>)</p>
+          <p>Crimes that people see raise your <b>wanted stars</b>. Killing cops never clears them: lose the cops (stars fade slowly) or pay them off at the QG (B). If the cops put you down, you go to <b>prison</b>. Inside your QG walls you can't get hurt while it's calm.</p>
           <p><b>TAB</b> map + waypoints · <b>Enter</b> chat · <b>M</b> mute music</p>
         </div>
         <button class="btn" data-set="stats">GAME STATS</button>
+        ${s && s.mode === 'pvp' ? '<button class="btn" data-set="ally">MAKE ALLIANCE</button>' : ''}
         <button class="btn" data-set="quality">GRAPHICS: ${s && s.quality === 'low' ? 'LOW (faster)' : 'HIGH'}</button>
         <button class="btn" data-set="blood">BLOOD: ${s && s.blood === false ? 'OFF' : 'ON'}</button>
         ${s && s.isHost ? '<button class="btn" data-set="save">SAVE NOW</button>' : ''}
@@ -1190,8 +1194,8 @@ export function createUI(root, cb) {
     const kd = st.deaths > 0 ? (st.kills / st.deaths).toFixed(2) : st.kills > 0 ? '∞' : '—';
     const groups = [
       ['COMBAT', [['Kills', n(st.kills)], ['Bosses', n(st.bosses)], ['Rival players', n(st.rivals)], ['Cops', n(st.cops)], ['ETs', n(st.aliens)], ['Kills / deaths', kd], ['Damage dealt', n(st.dmgOut)], ['Damage taken', n(st.dmgIn)], ['Gun accuracy', acc], ['Grenades thrown', n(st.gren)]]],
-      ['SURVIVAL', [['Times down', n(st.downs)], ['Deaths', n(st.deaths)], ['Gang-mates revived', n(st.revives)], ['Highest wanted', st.maxStars ? '★'.repeat(st.maxStars) : '—']]],
-      ['TURF', [['Districts taken', n(st.captures)], ['Raids beaten', n(st.raidsWon)], ['Squads sent', n(st.squads)], ['Locals recruited', n(st.recruits)], ['Crew lost', n(st.crewLost)], ['Crew now', n(st.crew)]]],
+      ['SURVIVAL', [['Times down', n(st.downs)], ['Deaths', n(st.deaths)], ['Gang-mates revived', n(st.revives)], ['Highest wanted', st.maxStars ? '★'.repeat(st.maxStars) : '—'], ['Arrests', n(st.arrests)], ['Fines paid', 'R$' + n(st.fines)], ['Time in prison', time(st.jail)], ['Prayers', n(st.prayers)]]],
+      ['TURF', [['Districts taken', n(st.captures)], ['Raids beaten', n(st.raidsWon)], ['Squads sent', n(st.squads)], ['Locals recruited', n(st.recruits)], ['Respect from aura', '+' + n(st.aura)], ['Crew lost', n(st.crewLost)], ['Crew now', n(st.crew)]]],
       ['STREETS', [['Time played', time(st.time)], ['Distance walked', n(st.dist) + ' m'], ['Money earned', 'R$' + n(st.earned)], ['Money spent', 'R$' + n(st.spent)], ['Cash now', 'R$' + n(st.cash)], ['Cars stolen', n(st.steals)], ['Drinks & stims bought', n(st.drinks)], ['Pets petted', n(st.pets)], ['Level', n(st.level)]]],
     ];
     const html = groups.map(([t, rows]) => `<div class="stats-group"><div class="stats-h">${t}</div>${rows.map(([k, v]) => `<div class="stats-row"><span>${k}</span><b>${v}</b></div>`).join('')}</div>`).join('');
@@ -1199,6 +1203,24 @@ export function createUI(root, cb) {
       <div class="stats-body"><div class="stats-grid">${html}</div>
       <p class="small">Your numbers for this whole game. They are kept in the save with your character.</p>
       <button class="btn" data-set="menu">BACK</button></div>`);
+  };
+
+  // ESC → MAKE ALLIANCE (PvP / Rei da Boca): ask another gang to let yours join them, for good
+  U.showAlliance = (o) => {
+    const rows = o.gangs.map((g) => `<div class="ally-row"><span class="dot" style="background:${GANG_COLORS[g.idx]}"></span><b style="color:${GANG_COLORS[g.idx]}">${esc(g.name)}</b><span class="small">${g.owned ?? '?'} districts${g.online ? '' : ' · nobody online'}</span>
+      <button class="btn" data-set="ally:${g.idx}" ${g.online ? '' : 'disabled'}>ASK TO JOIN</button></div>`).join('');
+    openModal('ally', `<div class="panel-title">MAKE ALLIANCE <span class="close" data-close>✕</span></div>
+      <div class="ally-body">
+      ${o.pvp ? `<p>Your gang <b>${esc(o.myName)}</b> joins another gang <b>for good</b>: you all take their colors, your districts, guards, turrets and vehicles become theirs, your vault goes into theirs and your main base becomes one of their outposts.</p>
+      <p class="small">Someone from the other gang has to accept.</p>
+      ${rows || '<p class="small">No other gang to join right now.</p>'}` : '<p>Alliances are for PvP and Rei da Boca games.</p>'}
+      <button class="btn" data-set="menu">BACK</button></div>`);
+  };
+  U.allyRequest = (ev) => {
+    openModal('allyreq', `<div class="panel-title">ALLIANCE REQUEST</div>
+      <div class="ally-body"><p><b>${esc(ev.by)}</b> asks for their gang <b style="color:${GANG_COLORS[ev.from]}">${esc(ev.fname)}</b> to <b>join yours</b>.</p>
+      <p class="small">If you accept, all their players, districts, guards, turrets, vehicles and vault money become part of your gang, for good.</p>
+      <div class="row"><button class="btn big" data-set="allyok:${ev.from}">ACCEPT</button> <button class="btn danger" data-set="allyno:${ev.from}">DECLINE</button></div></div>`);
   };
 
   U.showVictory = (o) => {
