@@ -154,6 +154,9 @@ input { font-family: var(--head); }
 .slot .key { position: absolute; left: 3px; top: 2px; font-family: var(--head); font-size: 9px; color: var(--yellow); }
 .slot .wname { position: absolute; bottom: 2px; left: 0; right: 0; font-size: 14px; line-height: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 3px; }
 .slot .wname i { color: var(--cyan); font-style: normal; }
+.slot .wburst { position: absolute; top: 2px; right: 4px; font-size: 10px; line-height: 10px; color: #7dff4a; text-shadow: 0 0 4px #7dff4a; letter-spacing: 1px; }
+.slot .wburst i { color: #2a4a2a; font-style: normal; text-shadow: none; }
+.slot .wburst .rech { color: var(--yellow); text-shadow: none; font-size: 9px; letter-spacing: 0; }
 .slot-gap { width: 10px; }
 .slot.abil .aicon { font-size: 26px; color: var(--cyan); margin-bottom: 8px; text-shadow: 0 0 8px var(--cyan); }
 .slot.abil .aname { position: absolute; bottom: 2px; left: 0; right: 0; font-size: 13px; color: var(--dim); }

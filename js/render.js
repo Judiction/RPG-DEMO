@@ -1553,6 +1553,8 @@ export function createRenderer(canvas) {
         for (let k = 0; k < 3; k++) { const [px, py] = pt(a - 0.06 + k * 0.06, r + 4 - Math.abs(k - 1) * 2); ctx.fillRect(px - 1, py - 1, 2, 2); }
       }
       ctx.globalAlpha = 1;
+      // an abandoned district: say so over the core (free to take)
+      if (rs.owner === 9 && !(rs.capture > 0) && view.me && Math.abs(view.me.x - x) < 12 * TILE && Math.abs(view.me.y - y) < 9 * TILE) drawText(ctx, Math.floor(t * 1.5) % 2 ? 'VAZIO' : 'EMPTY - TAKE IT', x, y - 30, '#c8c8d0', 'center', '#120a1c');
       if (rs.shield) {
         const pulse = 0.55 + Math.sin(t * 2.4) * 0.2;
         const sr = r + 9, sy = y - 8;

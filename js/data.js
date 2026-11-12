@@ -4,7 +4,7 @@
 export const TILE = 16;
 
 export const GAME_NAME = 'NEON QUEBRADA';
-export const VERSION = '0.63';
+export const VERSION = '0.64';
 // 3D buildings: camera height (smaller = stronger lean, you see more of the facades) and a height multiplier
 export const PERSPECTIVE = { camZ: 400, heightMul: 1.3 };      // shown on the title screen; bump to 0.61, 0.62... for each fix before a GitHub sync
 
@@ -134,8 +134,8 @@ export const WEAPONS = {
   },
   // rare: only dropped by the ET Comandante (alien invasion). Never sold.
   ufo: {
-    name: 'Varginha Ray', pt: 'Raio de Varginha', kind: 'beam', dmg: 24, cd: 0.55, range: 200, color: '#7dff4a', rare: true, price: 3000, lvl: 1,
-    desc: 'Alien tech from the ET Comandante. A fast green ray that cuts through everything in line.',
+    name: 'Varginha Ray', pt: 'Raio de Varginha', kind: 'beam', dmg: 18, cd: 0.3, burst: 4, recharge: 3, range: 200, color: '#7dff4a', rare: true, price: 3000, lvl: 1,
+    desc: 'Alien tech from the ET Comandante. Fires 4 green rays that cut through everything in line, then needs 3s to recharge.',
   },
 };
 // grenades: a pouch next to the arms. Z throws at the cursor, C switches type. Up to 3 of each.
@@ -296,7 +296,13 @@ export const CHURCH = { prayT: 10, heal: 0.35, range: 7, cooldown: 60, healerCha
 export const JAIL = { time: 60, finePerStar: 300 };
 export const JAIL_ID = 99;          // the prison uses the bar slot (p.inBar) with this id
 // police on the streets even when nobody is wanted (per player around them)
-export const PATROL = { cars: 2, cops: 3, maxCars: 8, maxCops: 14, carSpeed: 105, spot: 8 };
+// (cops on foot within copR tiles of a player, cruisers within carR tiles)
+export const PATROL = { cars: 1, cops: 1, maxCars: 3, maxCops: 5, copR: 30, carR: 60, carSpeed: 105, spot: 8 };
+// empty districts: nobody holds them at the start (host picks the share). Anyone can walk in and take the core.
+// Whoever takes one gets a police raid a little later: if the police clear it, it goes back to empty.
+export const EMPTY = 9;                       // owner code of an empty district
+export const EMPTY_SHARES = [0, 0.1, 0.2, 0.3, 0.5];
+export const POLICE_RAID = { warn: 20, size: (tier) => 4 + Math.round(tier * 1.5) };
 export const TURRET_HP_MULT = 2.5;          // turrets take a lot of damage before they go down (then you buy a new one)
 export const TURRET_REPAIR_K = 0.6;         // repair cost = missing HP share × price × this
 export const FACTION_UPGRADE_T = 75;        // seconds between NPC faction upgrade purchases
@@ -448,6 +454,8 @@ export const WANTED = {
   lostDecay: 1.1,         // heat lost per second once the cops lost you (~90 s per star)
   reinforce: [0, 12, 10, 8, 7, 6],   // seconds before a new wave when every cop sent after you is down (by stars)
   starHp: 0.15, starDmg: 0.08,       // cops get tougher with each star above 1
+  baseDecay: 5, baseCopR: 14,        // inside your main base walls with no cop within baseCopR tiles: ~1 star every 20 s
+  heliStars: 5,                      // helicopters only come at this wanted level
 };
 // what each wanted level sends (tiers of the police faction)
 export const POLICE_WAVES = [

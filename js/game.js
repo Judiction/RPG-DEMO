@@ -17,9 +17,10 @@ import {
   EXTRA_SOLDIERS, SQUADS, SQUAD_COOLDOWN, TURRET_HP_MULT, TURRET_REPAIR_K, FACTION_UPGRADE_T,
   GRENADES, GREN_MAX, GREN_RANGE, GREN_CD,
   HELI, CIV_CARS,
-  AGGRO, GUARD, WALL_TURRET_RANGE, BASE_ALARM, PETS, ALIENS, AURA, CHURCH, JAIL, JAIL_ID, JAIL_ROOM, PATROL,
+  AGGRO, GUARD, WALL_TURRET_RANGE, BASE_ALARM, PETS, ALIENS, AURA, CHURCH, JAIL, JAIL_ID, JAIL_ROOM, PATROL, EMPTY, POLICE_RAID,
 } from './data.js';
 import { moveBox, lineOfSight, rayCast, bfsField, fieldDir, regionAt, opaqueAt, solidAt, nearestOpen, boxHits } from './world.js';
+import { hash2 } from './rng.js';
 
 export const PLAYER_R = 5;
 export const DAY_LEN = 420;               // seconds per day/night cycle
@@ -89,11 +90,55 @@ export function createGame(world, opts = {}) {
   }
   if (opts.save) loadSave(game, opts.save);
   else {
+    for (const i of emptyDistricts(world, opts.empty || 0)) makeEmpty(game, i, true);
     if (mode === 'pve') makeGang(game, opts.gangIdx ?? 0, opts.gangName, world.baseId);
     game.king = king; game.kingGoal = Math.max(60, (opts.kingTime || 10) * 60); game.kingHold = {};
     spawnInitialVehicles(game);
   }
   return game;
+}
+
+// Which districts start empty: never HQs, gang base sites or the BOCA KING. Picked from the seed, so the
+// New Game preview can show them.
+export function emptyDistricts(world, share) {
+  if (!(share > 0)) return [];
+  const list = world.regions.filter((R) => !R.base && !R.hq && !R.king && R.faction >= 0 && R.id !== world.baseId).map((R) => R.id);
+  list.sort((a, b) => hash2(a, 7, world.seed ^ 0xe3e3) - hash2(b, 7, world.seed ^ 0xe3e3));
+  return list.slice(0, Math.round(list.length * share));
+}
+// an abandoned district: nobody's flag, no guards, no turrets, no upgrades
+function makeEmpty(game, i, quiet = false) {
+  const rs = game.rs[i];
+  for (const al of [...game.allies.values()]) if (al.region === i) game.allies.delete(al.id);
+  for (const e of game.enemies.values()) if (e.home === i && e.garrison) { e.garrison = false; e.leaving = true; }
+  rs.owner = EMPTY; rs.capture = 0; rs.capBy = null; rs.garrison = 0; rs.garrisonMax = 0; rs.spawned = 0;
+  rs.guards = 0; rs.gspawned = 0; rs.guardT = 0; rs.extra = 0; rs.boss = false;
+  rs.up = freshUps(); rs.slots = [null, null, null, null];
+  syncTurrets(game, i);
+  game.regionVer++;
+  if (!quiet) checkFactions(game);
+}
+// somebody moved into an empty district: the police come to clear it ~20 s later
+function startPoliceRaid(game, i) {
+  if (game.raids.some((r) => r.target === i)) return;
+  const w = game.world, R = w.regions[i];
+  const src = R.neighbors.find((n) => (w.spawnTiles[n] || []).length) ?? i;
+  const own = game.rs[i].owner;
+  const raid = { id: game.nextId++, kind: 'p', f: 3, target: i, src, gang: isGang(own) ? own : null, def: own, state: 'warn', t: POLICE_RAID.warn, size: POLICE_RAID.size(R.tier), alive: 0 };
+  if (!isGang(own)) raid.xr = own;
+  game.raids.push(raid);
+  game.regionVer++;
+  emit(game, { t: 'praid', r: i, eta: POLICE_RAID.warn, g: raid.gang, f: isGang(own) ? undefined : own, n: raid.size });
+}
+// the police took the core back: the district is empty again
+function policeClears(game, i, raid) {
+  const prev = game.rs[i].owner;
+  for (const e of game.enemies.values()) if (e.raid === raid.id) { e.raid = null; e.leaving = true; e.target = null; }
+  game.raids = game.raids.filter((r) => r !== raid);
+  makeEmpty(game, i);
+  if (isGang(prev)) game.stats.lost++;
+  emit(game, { t: 'pclear', r: i, g: isGang(prev) ? prev : undefined, f: isGang(prev) ? undefined : prev });
+  checkEndgame(game);
 }
 
 function makeGang(game, idx, name, base) {
@@ -1262,23 +1307,16 @@ function killEnemy(game, e, src) {
   emit(game, { t: 'die', x: e.x, y: e.y, tr: e.tier, f: e.faction, b: e.bulk, boss: e.boss });
   const T = TIERS[e.tier];
   let cash = T.cash * (1 + e.stars * 0.5) * (0.85 + rand() * 0.3);
-  let xp = e.police ? 0 : T.xp * (1 + e.stars * 0.5);
+  let xp = e.police || e.copRaid ? 0 : T.xp * (1 + e.stars * 0.5);
   if (e.alien) { cash *= ALIENS.reward; xp *= ALIENS.reward; alienDown(game, e, src); }
   {
     const kp = src && src.k === 'p' ? game.players.get(src.id) : null;
     if (kp) { stat(kp, 'kills'); if (e.boss) stat(kp, 'bosses'); if (e.police) stat(kp, 'cops'); if (e.alien) stat(kp, 'aliens'); }
   }
-  if (e.police && src && src.k === 'p') {
-    const k = game.players.get(src.id);
-    if (k && Math.floor(k.heat / 100) >= 3) {
-      const loss = Math.min(k.xp, Math.round(xpForLevel(k.level) * COP_XP_LOSS));
-      if (loss > 0) { k.xp -= loss; k.dirty = true; emit(game, { t: 'xploss', id: k.id, to: k.id, v: loss, x: k.x, y: k.y - 28, cop: 1 }); }
-    }
-  }
   const gang = src && src.team ? game.gangs.get(src.team) : null;
   if (gang) cash *= 1 + 0.15 * (gang.upgrades.bounty || 0);
   let killer = src && src.k === 'p' ? game.players.get(src.id) : null;
-  if (src && src.k === 'a' && !e.police) crewKill(game, game.allies.get(src.id));
+  if (src && src.k === 'a' && !e.police && !e.copRaid) crewKill(game, game.allies.get(src.id));
   if (!killer && src && src.k === 'a') {
     // crew and soldiers: the money goes to the gang vault (the boss still learns from it)
     const al = game.allies.get(src.id);
@@ -1548,6 +1586,14 @@ function fireWeapon(game, p, slot) {
   mult *= buff(p, 'dmg', 1);
   if (p.cloakT > 0) { mult *= 2; p.cloakT = 0; emit(game, { t: 'fx', k: 'uncloak', id: p.id, x: p.x, y: p.y }); }
   p.cd[slot] = Wp.cd * buff(p, 'rof', 1);
+  if (Wp.burst) {
+    // fires a burst, then recharges (a short pause refills a half-used burst)
+    p.wb = p.wb || {};
+    const b = p.wb[wid] || (p.wb[wid] = { n: Wp.burst, until: 0, last: 0 });
+    if (game.time - b.last > Wp.recharge * 0.6) b.n = Wp.burst;
+    b.last = game.time; b.n--;
+    if (b.n <= 0) { b.n = Wp.burst; b.until = game.time + Wp.recharge; for (const s2 of ['L', 'R']) if (p.equip[s2] === wid) p.cd[s2] = Wp.recharge; p.dirty = true; }
+  }
   const a = p.aim;
   const v = p.veh ? game.vehicles.get(p.veh) : null;
   const lift = v && v.flying ? 12 : 0;
@@ -2198,6 +2244,7 @@ function updateAlly(game, al, dt) {
         if (d > (m < 1 || isCur ? lim * 1.4 : lim)) return;
         let sc = d * m * (isCur ? AGGRO.stickK : 1);
         if (guard && defense && inWalls(o)) sc *= 0.6;
+        if (o.k === 'e' && (o.police || o.copRaid)) sc *= 0.3;          // cops after our gang: them first
         if (sc < bs && lineOfSight(world, al.x, al.y - 6, o.x, bodyY(o))) { bs = sc; best = o; }
       });
       if (best) tgt = best;
@@ -2493,7 +2540,7 @@ function updateRegions(game, dt) {
             if (e.garrison && (e.state === 'idle' || e.state === 'return')) { game.enemies.delete(e.id); rs.spawned = Math.max(0, rs.spawned - 1); }
           }
         }
-        if (!game.defeated[rs.owner] && rs.garrison < rs.garrisonMax) {
+        if (rs.owner !== EMPTY && !game.defeated[rs.owner] && rs.garrison < rs.garrisonMax) {
           rs.regenT += dt;
           if (rs.regenT > 14) { rs.regenT = 0; rs.garrison++; game.regionVer++; }
         }
@@ -2507,17 +2554,17 @@ function updateRegions(game, dt) {
       }
       // our squads standing on the core count like players
       for (const al of game.allies.values()) if (al.squad && dist2(al.x, al.y, core.x, core.y) < (2.6 * TILE) ** 2) onCore.set(al.team, (onCore.get(al.team) || 0) + 1);
-      if (fraid && fraid.kind === 'f' && raidersNear > 0 && !defNear && rs.garrison <= 0) {
+      if (fraid && (fraid.kind === 'f' || fraid.kind === 'p') && raidersNear > 0 && !defNear && rs.garrison <= 0) {
         rs.capBy = 'raid'; rs.capture = Math.min(1, rs.capture + dt * 0.12 * (1 - 0.25 * (rs.up.walls || 0)));
         game.regionVer++;
-        if (rs.capture >= 1) { factionTakes(game, i, fraid); continue; }
+        if (rs.capture >= 1) { if (fraid.kind === 'p') policeClears(game, i, fraid); else factionTakes(game, i, fraid); continue; }
       }
       const gangsOn = [...onCore.keys()];
       const prev = rs.capture;
       let progressing = false;
       if (gangsOn.length === 1) {
         const g = gangsOn[0];
-        const capturable = rs.garrison <= 0 && adjacentTo(game, i, g) && (!R.hq || rs.bossDefeated);
+        const capturable = rs.garrison <= 0 && (rs.owner === EMPTY || adjacentTo(game, i, g)) && (!R.hq || rs.bossDefeated);
         if (capturable && !enemiesNear) {
           progressing = true;
           if (rs.capBy !== g && rs.capture > 0) rs.capture = Math.max(0, rs.capture - dt * 0.3);
@@ -2530,7 +2577,7 @@ function updateRegions(game, dt) {
         if (progressing || rs.hintT > 0) continue;
         rs.hintT = 6;
         let text;
-        if (!adjacentTo(game, i, g)) text = 'Too far from your turf! Take a neighboring district first.';
+        if (rs.owner !== EMPTY && !adjacentTo(game, i, g)) text = 'Too far from your turf! Take a neighboring district first.';
         else if (R.hq && !rs.hqUnlocked) text = `HQ locked: control half of ${FACTIONS[rs.owner].short} territory first.`;
         else if (R.hq && !rs.bossDefeated) text = `Defeat ${FACTIONS[rs.owner].boss} to take this HQ!`;
         else if (rs.garrison > 0) text = `Kill the garrison first: ${rs.garrison} left.`;
@@ -2624,7 +2671,7 @@ function updateRegions(game, dt) {
       } else rs.capture = Math.max(0, rs.capture - dt * 0.15);
       if (prev !== rs.capture) game.regionVer++;
       if (rs.capture >= 1) {
-        if (rs.capBy === 'raid' && raid) loseRegion(game, i, raid);
+        if (rs.capBy === 'raid' && raid) { if (raid.kind === 'p') policeClears(game, i, raid); else loseRegion(game, i, raid); }
         else if (isGang(rs.capBy)) captureRegion(game, i, rs.capBy);
       }
     }
@@ -2651,6 +2698,7 @@ function captureRegion(game, i, g) {
   const gang = game.gangs.get(g);
   if (!gang) return;
   setOwner(game, i, g);
+  if (prevOwner === EMPTY) startPoliceRaid(game, i);
   for (const e of game.enemies.values()) if (e.home === i && !e.raid) e.garrison = false;
   const sq = game.raids.find((r) => r.kind === 'g' && r.target === i && r.f === g);
   if (sq) {
@@ -2694,6 +2742,7 @@ function factionTakes(game, i, raid) {
   rs.garrison = rs.spawned = n; rs.garrisonMax = Math.max(rs.garrisonMax || 0, n + 4);
   game.raids = game.raids.filter((r) => r !== raid);
   emit(game, { t: 'fcap', r: i, f: raid.f, pf: prev });
+  if (prev === EMPTY) startPoliceRaid(game, i);
   checkFactions(game);
   checkEndgame(game);
 }
@@ -2718,7 +2767,7 @@ function checkHqUnlocks(game) {
   for (let f = 0; f < 3; f++) {
     const hq = w.hqs[f];
     if (hq < 0 || game.rs[hq].hqUnlocked) continue;
-    const list = w.factionRegions[f].filter((r) => r !== hq);
+    const list = w.factionRegions[f].filter((r) => r !== hq && game.rs[r].owner !== EMPTY);
     const owned = list.filter((r) => game.rs[r].owner === g.id).length;
     if (list.length === 0 || owned / list.length >= 0.5) {
       game.rs[hq].hqUnlocked = true;
@@ -2806,8 +2855,13 @@ function updateRaids(game, dt) {
     if (raid.state === 'warn') {
       if (raid.t <= 0) spawnRaid(game, raid);
     } else if (raid.kind && raid.alive <= 0) {
-      // a faction raid or a squad got wiped out
+      // a faction raid, a police raid or a squad got wiped out
       game.raids = game.raids.filter((r) => r !== raid);
+      if (raid.kind === 'p' && raid.gang && game.rs[raid.target].owner === raid.gang) {
+        const gang = game.gangs.get(raid.gang);
+        if (gang) gang.vault += 250;
+        for (const p of game.players.values()) if (p.gang === raid.gang) { addXp(game, p, 80); stat(p, 'raidsWon'); }
+      }
       emit(game, { t: 'raidend', r: raid.target, win: false, kind: raid.kind, f: raid.f, g: raid.kind === 'g' ? raid.f : undefined });
       game.regionVer++;
     } else if (raid.kind && (raid.t <= 0 || game.rs[raid.target].owner !== raid.def)) {
@@ -2838,6 +2892,10 @@ function startFactionRaid(game) {
   const w = game.world, cands = [];
   for (let i = 0; i < game.rs.length; i++) {
     const own = game.rs[i].owner;
+    if (own === EMPTY && !game.raids.some((r) => r.target === i)) {
+      for (const n of w.regions[i].neighbors) { const o = game.rs[n].owner; if (typeof o === 'number' && o < 3 && !game.defeated[o]) cands.push({ target: i, src: n, f: o, def: EMPTY, w: 3 }); }
+      continue;
+    }
     if (typeof own !== 'number' || own > 2 || game.raids.some((r) => r.target === i)) continue;
     if (w.regions[i].hq && !game.rs[i].bossDefeated && rand() < 0.7) continue;
     for (const n of w.regions[i].neighbors) {
@@ -2849,7 +2907,7 @@ function startFactionRaid(game) {
   let tot = 0; for (const c of cands) tot += c.w;
   let r = rand() * tot, c = cands[0];
   for (const x of cands) { r -= x.w; if (r <= 0) { c = x; break; } }
-  const size = 5 + Math.round(w.regions[c.target].tier * 1.5 + rand() * 3);
+  const size = c.def === EMPTY ? 4 + Math.round(rand() * 3) : 5 + Math.round(w.regions[c.target].tier * 1.5 + rand() * 3);
   const raid = { id: game.nextId++, kind: 'f', f: c.f, target: c.target, src: c.src, gang: null, def: c.def, xr: c.def, state: 'warn', t: 20, size, alive: 0 };
   game.raids.push(raid);
   emit(game, { t: 'fraid', r: c.target, f: c.f, d: c.def });
@@ -2902,13 +2960,17 @@ function spawnRaid(game, raid) {
     }
     const owned = raid.gang ? ownedCount(game, raid.gang) : 4;
     const lieutenant = n < Math.floor(raid.size / 8) && raid.size >= 8;
-    const e = spawnEnemy(game, raid.f, lieutenant ? 5 : rollTier(game, R, 0.9 + Math.min(1.6, owned * 0.06)), x, y, raid.src, { raid: raid.id });
-    if (lieutenant || (owned > 14 && rand() < 0.3)) { e.stars = 1; e.maxHp = e.hp = Math.round(e.maxHp * 1.3); e.dmg *= 1.15; }
+    const cop = raid.kind === 'p';
+    const tier = cop ? (n === 0 && raid.size >= 7 ? 4 : 1 + ((rand() * 3) | 0)) : lieutenant ? 5 : rollTier(game, R, 0.9 + Math.min(1.6, owned * 0.06));
+    const e = spawnEnemy(game, raid.f, tier, x, y, raid.src, { raid: raid.id });
+    if (cop) { e.copRaid = true; e.atk = POLICE_ATK[tier]; e.maxHp = e.hp = Math.round(e.maxHp * 1.4); e.dmg *= 1.25; if (tier === 4) { e.flyer = true; e.speed = 70; } }
+    else if (lieutenant || (owned > 14 && rand() < 0.3)) { e.stars = 1; e.maxHp = e.hp = Math.round(e.maxHp * 1.3); e.dmg *= 1.15; }
     if (raid.xr !== undefined) { e.team = 'r' + raid.id; e.xr = raid.xr; }
     raid.alive++;
   }
   raid.state = 'active';
   raid.t = 200;
+  if (raid.kind === 'p') { emit(game, { t: 'copsdrop', x: Math.round(best.x), y: Math.round(best.y) }); emit(game, { t: 'siren', x: Math.round(best.x), y: Math.round(best.y) }); }
   emit(game, { t: 'raidgo', r: raid.target, f: raid.f, g: raid.gang, kind: raid.kind });
 }
 
@@ -3484,6 +3546,24 @@ function crime(game, p, amount, x, y, seen = false, kind = '') {
   if (p.lost && after > 0) { p.lost = false; p.escapeT = 0; p.dirty = true; emit(game, { t: 'wanted', id: p.id, stars: after, why: 'found', to: p.id }); return; }
   if (after > before) { p.dirty = true; emit(game, { t: 'wanted', id: p.id, stars: after, to: p.id }); }
 }
+// inside the walls of your own main base
+function inOwnQG(game, p) {
+  const gang = game.gangs.get(p.gang);
+  if (!gang || gang.base < 0 || game.rs[gang.base].owner !== p.gang || p.veh) return false;
+  const C = game.world.regions[gang.base].compound;
+  const tx = p.x / TILE, ty = p.y / TILE;
+  return tx > C.x && ty > C.y && tx < C.x + C.w && ty < C.y + C.h;
+}
+// any cop after this player within r tiles?
+function copsNear(game, p, r) {
+  const r2 = (r * TILE) ** 2;
+  for (const e of game.enemies.values()) {
+    if (e.leaving || !(e.police || e.copRaid)) continue;
+    if (e.patrol && !(e.target && (e.target.id === p.id || e.target.id === p.veh))) continue;
+    if (dist2(e.x, e.y, p.x, p.y) < r2) return true;
+  }
+  return false;
+}
 // a cop (or a cruiser) recognized a wanted player the police had lost: the chase is back on
 function spotted(game, p) {
   if (!p || !p.lost || p.heat < 100) return;
@@ -3505,7 +3585,7 @@ function loseCops(game, p, why) {
 function isCopSrc(game, src) {
   if (!src) return false;
   if (src.k === 'h' || src.cop) return true;
-  if (src.k === 'e') { const e = game.enemies.get(src.id); return !!(e && e.police); }
+  if (src.k === 'e') { const e = game.enemies.get(src.id); return !!(e && (e.police || e.copRaid)); }
   return false;
 }
 // police only fight the gang of whoever they're after (patrol cops on their round are left alone)
@@ -3563,7 +3643,7 @@ function spawnHeli(game, p, kind) {
 function updateHelis(game, dt) {
   for (const h of [...game.helis.values()]) {
     const p = game.players.get(h.pid);
-    if (!p || p.dead || p.copLevel <= 0 || p.safe || p.inBar >= 0) if (h.state !== 'out') h.state = 'out';
+    if (!p || p.dead || p.copLevel < WANTED.heliStars || p.safe || p.inBar >= 0) if (h.state !== 'out') h.state = 'out';
     const sp = HELI.speed * dt;
     if (h.state === 'out') {
       const dx = h.ox - h.x, dy = h.oy - h.y, d = Math.hypot(dx, dy);
@@ -3670,7 +3750,7 @@ function updatePatrol(game, dt) {
     for (const p of players) {
       if (cops >= PATROL.maxCops) break;
       let n = 0;
-      for (const e of game.enemies.values()) if (e.patrol && dist2(p.x, p.y, e.x, e.y) < (30 * TILE) ** 2) n++;
+      for (const e of game.enemies.values()) if (e.patrol && dist2(p.x, p.y, e.x, e.y) < (PATROL.copR * TILE) ** 2) n++;
       if (n >= PATROL.cops) continue;
       for (let tries = 0; tries < 6; tries++) {
         const a = rand() * 6.28, d = (18 + rand() * 8) * TILE;
@@ -3679,7 +3759,7 @@ function updatePatrol(game, dt) {
         const i = ty * W.W + tx;
         if (!W.reach[i] || !CIV_GROUND.has(W.tiles[i]) || inCompound(tx, ty)) continue;
         const x = (tx + 0.5) * TILE, y = (ty + 0.5) * TILE;
-        const e = spawnEnemy(game, 3, rand() < 0.75 ? 1 : 2, x, y, -1, {});
+        const e = spawnEnemy(game, 3, rand() < 0.8 ? 1 : 2, x, y, -1, {});
         e.police = 'patrol'; e.patrol = true; e.atk = POLICE_ATK[e.tier]; e.hx = x; e.hy = y; e.state = 'idle';
         e.maxHp = e.hp = Math.round(e.maxHp * 1.5); e.dmg *= 1.35;
         cops++;
@@ -3695,7 +3775,7 @@ function updatePatrol(game, dt) {
     for (const p of players) {
       if (cars >= PATROL.maxCars) break;
       let n = 0;
-      for (const c of game.pcars.values()) if (c.cruise && dist2(p.x, p.y, c.x, c.y) < (40 * TILE) ** 2) n++;
+      for (const c of game.pcars.values()) if (c.cruise && dist2(p.x, p.y, c.x, c.y) < (PATROL.carR * TILE) ** 2) n++;
       if (n >= PATROL.cars) continue;
       const a = rand() * 6.28, d = (26 + rand() * 10) * TILE;
       const x = Math.max(TILE * 2, Math.min((W.W - 2) * TILE, p.x + Math.cos(a) * d)), y = Math.max(TILE * 2, Math.min((W.H - 2) * TILE, p.y + Math.sin(a) * d));
@@ -3763,6 +3843,16 @@ function updatePolice(game, dt) {
   }
   for (const p of game.players.values()) {
     if (p.dead || p.out || p.inBar === JAIL_ID) continue;
+    if (p.heat > 0 && inOwnQG(game, p) && !copsNear(game, p, WANTED.baseCopR)) {
+      const s0 = Math.floor(p.heat / 100);
+      p.heat = Math.max(0, p.heat - WANTED.baseDecay * dt);
+      const s1 = Math.floor(p.heat / 100);
+      if (s1 < s0) {
+        p.dirty = true;
+        if (s1 <= 0 && (p.copLevel > 0 || p.lost)) { clearWanted(game, p, 'home'); continue; }
+        emit(game, { t: 'wanted', id: p.id, stars: s1, why: 'drop', to: p.id });
+      }
+    }
     const stars = Math.floor(p.heat / 100);
     if (p.lost) {
       // they lost you: the stars fade slowly while nobody sees you (the cops wait outside bars)
@@ -3775,13 +3865,12 @@ function updatePolice(game, dt) {
     if (stars > p.copLevel && p.inBar < 0) {
       const prev = p.copLevel ? POLICE_WAVES[p.copLevel].length : 0;
       dispatchPolice(game, p, POLICE_WAVES[stars].slice(prev));
-      if (stars >= 4 && p.copLevel < 4) { spawnHeli(game, p, 'mg'); p.heliT = HELI.back; }
-      if (stars >= 5 && p.copLevel < 5) spawnHeli(game, p, 'rocket');
+      if (stars >= WANTED.heliStars && p.copLevel < WANTED.heliStars) { spawnHeli(game, p, 'mg'); spawnHeli(game, p, 'rocket'); p.heliT = HELI.back; }
       p.copLevel = stars; p.copSeen = true; p.dirty = true;
     }
-    if (p.copLevel >= 4 && !p.safe && p.inBar < 0) {
+    if (p.copLevel >= WANTED.heliStars && !p.safe && p.inBar < 0) {
       p.heliT = (p.heliT ?? HELI.back) - dt;
-      if (p.heliT <= 0 && ![...game.helis.values()].some((h) => h.pid === p.id)) { p.heliT = HELI.back; spawnHeli(game, p, p.copLevel >= 5 && rand() < 0.5 ? 'rocket' : 'mg'); }
+      if (p.heliT <= 0 && ![...game.helis.values()].some((h) => h.pid === p.id)) { p.heliT = HELI.back; spawnHeli(game, p, rand() < 0.5 ? 'rocket' : 'mg'); }
     }
     if (p.copLevel <= 0) { if (p.heat > 0 && !p.safe) p.heat = Math.max(0, p.heat - WANTED.decay * dt); continue; }
     // the chase: killing the cops doesn't end it (more come). Get away from them for a while and they lose you.
@@ -4002,7 +4091,7 @@ export function regionState(game) {
       row.push([r.up.level, r.up.walls, r.up.barracks, r.up.medic, r.up.pad, r.up.radar, r.up.boca || 0], r.slots.map((s) => (s ? [TURRET_IDS.indexOf(s.type), s.mk, Math.round((s.hpf ?? 1) * 100)] : 0)), r.extra || 0);
       return row;
     }),
-    raids: game.raids.map((r) => [r.target, typeof r.f === 'number' ? r.f : 9, r.state === 'warn' ? 0 : 1, Math.max(0, Math.round(r.t)), r.gang ? gangIdx(r.gang) : -1, r.size, r.kind === 'g' ? gangIdx(r.f) : r.kind === 'f' ? 10 + r.def : -1]),
+    raids: game.raids.map((r) => [r.target, typeof r.f === 'number' ? r.f : 9, r.state === 'warn' ? 0 : 1, Math.max(0, Math.round(r.t)), r.gang ? gangIdx(r.gang) : -1, r.size, r.kind === 'g' ? gangIdx(r.f) : r.kind === 'f' || (r.kind === 'p' && !r.gang) ? 10 + r.def : -1]),
     fv: game.fvault ? game.fvault.map(Math.round) : [0, 0, 0],
     king: game.king ? { r: game.world.kingId, goal: game.kingGoal, hold: Object.entries(game.kingHold).map(([k, v]) => [k, Math.floor(v)]) } : null,
     gangs: [...game.gangs.values()].map((g) => ({ idx: g.idx, name: g.name, base: g.base, vault: Math.floor(g.vault), up: g.upgrades, out: g.out, into: g.into ? gangIdx(g.into) : undefined, owned: ownedCount(game, g.id) })),
@@ -4025,6 +4114,7 @@ export function privateState(game, p) {
     bar: p.inBar, emo: r1(Math.max(0, p.emoteT)), safe: !!p.safe,
     gren: p.gren, sq: Math.max(0, Math.ceil((p.squadT || 0) - game.time)), down: p.down ? r1(p.downT) : 0, rvd: p.down ? +p.revP.toFixed(2) : 0, rv: p.revId ? +(p.revT / DOWN.reviveT).toFixed(2) : 0, wd: Math.max(0, Math.ceil((p.wdT || 0) - game.time)),
     rep: Math.round(repOf(game, p.gang, regionAt(game.world, p.x, p.y))),
+    wb: Object.fromEntries(['L', 'R'].filter((s) => WEAPONS[p.equip[s]] && WEAPONS[p.equip[s]].burst).map((s) => { const W = WEAPONS[p.equip[s]], b = (p.wb || {})[p.equip[s]]; return [s, [b ? b.n : W.burst, W.burst, b ? r1(Math.max(0, b.until - game.time)) : 0]]; })),
     jail: p.inBar === JAIL_ID ? Math.max(0, Math.ceil(p.jailT)) : 0, lost: p.lost ? 1 : 0, reinf: p.reinfT !== undefined && p.copLevel > 0 ? Math.max(0, Math.ceil(p.reinfT)) : -1,
     pray: p.prayT > 0 ? r1(p.prayT) : 0, prayCd: Math.max(0, Math.ceil((p.prayCd || 0) - game.time)),
   };
@@ -4097,6 +4187,7 @@ export function debugFollower(game, pid, tier = 2) { const p = game.players.get(
 export function debugCapture(game, i, g) { captureRegion(game, i, g); }
 export function debugRaid(game) { game.raidT = 0.01; }
 export function debugUfo(game) { game.ufoT = 0.01; if (game.ufoN >= game.ufoMax) game.ufoMax = game.ufoN + 1; }
+export function debugEmpty(game, i) { makeEmpty(game, i); }
 export function debugArrest(game, pid) { const p = game.players.get(pid); if (p) { if (p.heat < 100) p.heat = 150; arrestPlayer(game, p, { k: 'h', id: 0, team: 'e' }); } }
 export function debugMerge(game, a, b) { const A = game.gangs.get(gangId(a)), B = game.gangs.get(gangId(b)); if (A && B) mergeGang(game, A, B); }
 export function debugHurt(game, pid, dmg, eid) { const p = game.players.get(pid); if (p) hurtPlayer(game, p, dmg, eid ? { k: 'e', id: eid, team: 'e' } : null); }

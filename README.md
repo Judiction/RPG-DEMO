@@ -9,7 +9,7 @@ Runs in the browser. No install, no server: one player hosts and friends join wi
 
 ---
 
-**Version 0.63** — the version is shown on the title screen. Everyone in a room must run the same version
+**Version 0.64** — the version is shown on the title screen. Everyone in a room must run the same version
 (the host refuses friends on another version; refresh with Ctrl+F5). Fixes before a GitHub sync are 0.61, 0.62...
 
 ## How to play
@@ -21,6 +21,11 @@ Runs in the browser. No install, no server: one player hosts and friends join wi
    - **Mode**: *PvE · Campaign* (everyone in one gang) or *PvP · Gang War* (players pick a gang color).
    - **Map**: Coastal, Island, Lakes, River or Archipelago. A **live preview** of the city is shown on the right.
    - **Size**: Small, Medium or Large.
+   - **Empty districts**: 0% (every district held by a faction), 10%, 20%, 30% or 50%. Empty districts are
+     abandoned (grey on the map, no flag, no guards): anyone — players or the factions — can walk in and stand on the
+     core to take them, even far from their turf. But about 20 seconds later the **police raid** it: if the cops wipe
+     out the defenders and hold the core, the district is empty again. Beat them and it's yours for good (the vault
+     gets a bonus). The preview shows the empty districts in grey.
    - **Seed**: press **REROLL** for another city, or paste a seed code (like `CM-1A2B3C`) to replay a map you liked.
    - **Save slot**: up to 5 saved games.
 3. Press **ESC → COPY INVITE LINK** (or the **COPY INVITE** button, bottom right) and send it to your friends.
@@ -93,6 +98,7 @@ to their round.
 Every NPC — enemy gangs, police, guards, soldiers, your crew, the ETs — hits back at **whoever hurt it lately** (the
 one dealing the most damage first), and otherwise fights the **closest enemy it can see**. They stick with a target
 unless someone else is clearly closer or hurting them more, so they don't flicker between targets.
+When the police come after your gang (or raid your district), your crew, guards and soldiers shoot the **cops first**.
 
 ### Base under attack
 When one of your districts is attacked — a bot raid, a squad sent by another player, rival players, ETs, or anything
@@ -163,7 +169,7 @@ transformers and cars are great for that.
 - **Dying** sends you back to the QG and costs **25% of your cash** (gone for good) plus **40% of your progress**
   toward the next level (you never drop a level). Revive your friends!
 - **Enemies level up after 4 kills** (players, guards, crew, turrets): they grow into the next, bigger tier and get a ★.
-- **Police give no XP.** Killing cops while you have 3 or more wanted stars costs you XP. Your crew doesn't learn
+- **Police give no XP** (and killing them never costs XP either). Your crew doesn't learn
   from cops or civilians either, and their kill money goes to the gang vault.
 
 ### Grenades
@@ -232,15 +238,16 @@ Smaller districts are **gang outposts**: little favela shacks in the corners, bu
   stay** and fade slowly (about a star every 1:30). If a cop or a patrol car **recognizes** you up close, or anyone sees
   a new crime, the chase is back on.
 - **Pay them off** at your QG (base menu, R$350 per star) — the only instant way out.
+- **Lay low at home**: inside your main base walls, with no cop close by, the stars fade fast (about one every 20s).
 - Dying to anything that isn't the police **keeps** your stars. Hiding in a bar freezes them — the cops wait outside.
 - **Prison**: if the police put you down, they cuff you on the spot (no downed phase). You pay a fine of **R$300 per
   star** (never more than you carry), your stars are cleared, and you spend **one minute** in the **Presídio Central**
   cell block — walk around, watch the inmates play ball, dance if you want. Then the gate opens and you walk out at
   your main base. No XP lost.
-- **Street patrols**: even when nobody is wanted, a few cops walk the sidewalks and a couple of police cars cruise
-  the streets around every player. They leave you alone — but a cop who sees a crime adds stars on the spot and
+- **Street patrols**: even when nobody is wanted, a cop walks the sidewalks and a police car cruises the streets
+  somewhere around every player. They leave you alone — but a cop who sees a crime adds stars on the spot and
   joins in. Attacking a cop makes you wanted right away.
-- Police are tough. At **4 stars** a helicopter with a machine gun comes; at **5 stars**, one with rockets too. They
+- Police are tough. Only at **5 stars** the helicopters come: one with a machine gun and one with rockets. They
   can't be shot down: they circle you, open fire for a while, leave, and come back if you're still wanted.
 - Civilians fly their cars over the city. Press **V** next to one to steal it (a crime if anyone sees it).
 
@@ -300,7 +307,7 @@ Vehicles are parked around the city (they show on the minimap and map). Press **
 | Rocket Arm | explosive rockets |
 | Rail Arm | instant piercing beam |
 | Chain Lightning | a bolt that jumps from enemy to enemy (up to 5), stuns drones |
-| Varginha Ray | **rare** — alien tech, a green piercing ray. Never sold: only the last ET of an invasion drops it |
+| Varginha Ray | **rare** — alien tech: 4 green piercing rays, then 3s to recharge (the dots on the arm slot). Never sold: only the last ET of an invasion drops it |
 
 ### Alien invasion (random event)
 Once or twice a game, at a random moment, a **flying saucer** comes for the **strongest player** (highest level and

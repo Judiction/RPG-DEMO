@@ -8,7 +8,7 @@
 
 import {
   TILE, WEAPONS, ABILITIES, randomLook, LOOK_KEYS, LOOK_OPTIONS, GANG_COLORS, NAME_COLORS, VEHICLES, VEHICLE_IDS,
-  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL, BAR_ROOM, ITEMS, WANTED, isMech, DOWN, WITHDRAW, VERSION, JAIL_ID, JAIL_ROOM, CHURCH,
+  TURRET_IDS, MAP_SIZES, FACTIONS, GANG_DEFAULT_NAMES, RECOIL, BAR_ROOM, ITEMS, WANTED, isMech, DOWN, WITHDRAW, VERSION, JAIL_ID, JAIL_ROOM, CHURCH, EMPTY,
   GRENADES, GRENADE_IDS, GREN_RANGE,
 } from './data.js';
 import { randomSeed } from './rng.js';
@@ -152,7 +152,7 @@ async function startHost(o) {
   const mode = king ? 'pvp' : o.mode;
   const bases = mode === 'pvp' ? MAP_SIZES[o.size].bases : 1;
   const world = o.world && o.world.seed === o.seed ? o.world : generateWorld(o.seed, { type: o.type, size: o.size, bases, king });
-  const game = G.createGame(world, { mode, gangIdx: o.gangIdx, gangName: o.gangName, king, kingTime: o.kingTime });
+  const game = G.createGame(world, { mode, gangIdx: o.gangIdx, gangName: o.gangName, king, kingTime: o.kingTime, empty: o.empty || 0 });
   app.slot = o.slot;
   beginHosting(world, game, { type: o.type, size: o.size, bases, king: king || undefined }, o.gangIdx);
 }
@@ -503,7 +503,18 @@ function clientTick(dt) {
       const firing = slot === 'L' ? app.fireL : app.fireR;
       if (firing && client.cd[slot] <= 0) {
         const wid = client.prof.equip[slot];
-        client.cd[slot] = WEAPONS[wid].cd * (client.prof.rof || 1);
+        const Wp = WEAPONS[wid];
+        const wb = client.me.wb && client.me.wb[slot];
+        if (wb && wb[2] > 0.15) continue;                     // recharging (the host says so)
+        client.cd[slot] = Wp.cd * (client.prof.rof || 1);
+        if (Wp.burst) {
+          client.bn = client.bn || {};
+          const now = performance.now() / 1000;
+          if (!client.bn[wid] || now - client.bn[wid].last > Wp.recharge * 0.6) client.bn[wid] = { n: Wp.burst, last: now };
+          const b = client.bn[wid];
+          b.last = now; b.n--;
+          if (b.n <= 0) { b.n = Wp.burst; client.cd[slot] = Wp.recharge; }
+        }
         predictFire(slot, wid);
       }
     }
@@ -788,8 +799,23 @@ function handleEvent(ev) {
     case 'fraid': if (near(corePos(ev.r).x, corePos(ev.r).y, 900)) ui.log(`${factionName(ev.f)} is attacking ${factionName(ev.d)} at <b>${escapeHtml(app.world.regions[ev.r].name)}</b>.`, 'info'); break;
     case 'fcap':
       renderer.capture(ev.r, ev.pf, ev.f);
-      ui.log(`${factionName(ev.f)} took <b>${escapeHtml(app.world.regions[ev.r].name)}</b> from ${factionName(ev.pf)}.`, 'info');
+      if (ev.pf === EMPTY) ui.log(`${factionName(ev.f)} moved into the empty district <b>${escapeHtml(app.world.regions[ev.r].name)}</b>.`, 'info');
+      else ui.log(`${factionName(ev.f)} took <b>${escapeHtml(app.world.regions[ev.r].name)}</b> from ${factionName(ev.pf)}.`, 'info');
       break;
+    // ---- v0.64: empty districts and the police raid that follows a capture
+    case 'praid': {
+      const R = app.world.regions[ev.r];
+      if (ev.g === myGangId()) { sfx('siren'); ui.alert(`⚠ <b>POLICE RAID</b> in ${ev.eta}s on <b>${escapeHtml(R.name)}</b> (${ev.n} cops)! They want that district empty again — hold the core.`, 'raid', 7000); ui.log(`The police are coming to clear <b>${escapeHtml(R.name)}</b>. Beat them and it's yours for good.`, 'bad'); }
+      else if (near(corePos(ev.r).x, corePos(ev.r).y, 900)) ui.log(`The police are coming to clear <b>${escapeHtml(R.name)}</b>.`, 'info');
+      break;
+    }
+    case 'pclear': {
+      const R = app.world.regions[ev.r];
+      renderer.capture(ev.r, ev.g ?? ev.f, EMPTY);
+      if (ev.g === myGangId()) { sfx('lost'); ui.alert(`The police cleared <b>${escapeHtml(R.name)}</b> — it's empty again.`, 'raid', 6000); }
+      else ui.log(`The police cleared <b>${escapeHtml(R.name)}</b>. It's empty again.`, 'info');
+      break;
+    }
     case 'squad':
       if (ev.g === myGangId()) { sfx('alarm', undefined, undefined, 0.5); ui.alert(`<b>${escapeHtml(ev.by)}</b> sent a squad of ${ev.n} against <b>${escapeHtml(app.world.regions[ev.r].name)}</b>!`, 'good', 5000); }
       else if (ev.f === myGangId()) { sfx('alarm'); ui.alert(`⚠ A rival squad is attacking <b>${escapeHtml(app.world.regions[ev.r].name)}</b>!`, 'raid', 6000); }
@@ -805,6 +831,7 @@ function handleEvent(ev) {
     case 'raidend':
       if (ev.kind === 'g') { if (ev.g === myGangId()) { if (ev.win) { sfx('capture'); ui.alert(`Your squad took <b>${escapeHtml(app.world.regions[ev.r].name)}</b>!`, 'good'); } else ui.alert(`Your squad at <b>${escapeHtml(app.world.regions[ev.r].name)}</b> ${ev.retreat ? 'gave up and went home' : 'was wiped out'}.`, 'raid'); } break; }
       if (ev.kind === 'f') break;
+      if (ev.kind === 'p') { if (ev.g === myGangId() && !ev.retreat) { sfx('capture'); ui.alert(`You beat the police at <b>${escapeHtml(app.world.regions[ev.r].name)}</b> — the district is yours for good!`, 'good', 6000); } break; }
       ui.toast(ev.retreat ? 'The raiders retreated.' : `Raid on ${escapeHtml(app.world.regions[ev.r].name)} defeated!`, 'good'); if (!ev.retreat) ui.log('Raid defeated! Bonus to the vault.', 'good'); break;
     case 'hq': sfx('alarm'); ui.alert(`${factionName(ev.f)} HQ is now open: <b>${escapeHtml(app.world.regions[ev.r].name)}</b>`, 'warn', 7000); ui.log(`You weakened ${factionName(ev.f)} enough — their HQ <b>${escapeHtml(app.world.regions[ev.r].name)}</b> can be attacked.`, 'warn'); break;
     case 'boss': sfx('boss'); ui.alert(`<b>${escapeHtml(ev.name)}</b> appears!`, 'raid', 5000); break;
@@ -861,6 +888,7 @@ function handleEvent(ev) {
       else if (ev.why === 'reinf') { ui.toast('Cops down — <b>reinforcements</b> are on their way. Killing cops never clears your stars: run!', 'warn'); }
       else if (ev.why === 'drop') { ui.toast(`Wanted level dropping: ${'★'.repeat(ev.stars)}`, 'good'); }
       else if (ev.why === 'faded') { sfx('cup'); ui.alert('The police forgot about you. Wanted level cleared.', 'good'); }
+      else if (ev.why === 'home') { sfx('cup'); ui.alert('Laying low at the QG paid off: wanted level cleared.', 'good'); }
       else if (ev.stars > 0) { sfx('siren'); ui.alert(`${'★'.repeat(ev.stars)} <b>WANTED</b> — the police are coming! Lose them, or pay them off at the QG (B). If they put you down, you go to prison.`, 'raid', 5000); }
       else if (ev.why === 'bribe') { sfx('cash'); ui.alert('Paid off. The police forget about you... for now.', 'good'); }
       break;
@@ -1004,7 +1032,7 @@ function handleEvent(ev) {
 }
 
 function corePos(r) { const C = app.world.regions[r].compound; return { x: (C.coreX + 0.5) * TILE, y: (C.coreY + 0.5) * TILE }; }
-function factionName(f) { return ['<span style="color:#c9c05a">Milícia</span>', '<span style="color:#3ad0ff">NeoBrás</span>', '<span style="color:#a66bff">Comando Cromo</span>', '<span style="color:#5a8aff">the police</span>', '<span style="color:#7dff4a">the ETs</span>'][f] || 'Enemies'; }
+function factionName(f) { return ['<span style="color:#c9c05a">Milícia</span>', '<span style="color:#3ad0ff">NeoBrás</span>', '<span style="color:#a66bff">Comando Cromo</span>', '<span style="color:#5a8aff">the police</span>', '<span style="color:#7dff4a">the ETs</span>'][f] || (f === EMPTY ? '<span style="color:#9a9aa6">nobody</span>' : 'Enemies'); }
 function gangsList() { return app.mode === 'host' ? [...app.game.gangs.values()].map((g) => ({ idx: g.idx, name: g.name })) : client.rg ? client.rg.gangs : []; }
 function gangName(id) { const i = G.gangIdx(id); const g = gangsList().find((x) => x.idx === i); return g ? g.name : GANG_DEFAULT_NAMES[i] || 'A gang'; }
 function gangLabel(id) { return `<b style="color:${GANG_COLORS[G.gangIdx(id)]}">${escapeHtml(gangName(id))}</b>`; }
@@ -1243,7 +1271,7 @@ function gameFrame(dt, now) {
   renderer.mouse.x = input.mouse.x; renderer.mouse.y = input.mouse.y;
   const mate = me && !me.dead && !me.down && !veh ? downedMateNear() : null;
   app.revHeld = !!(mate && !app.typing && input.keys.has('KeyE'));
-  const fireOk = me && !me.dead && !app.menuOpen && !app.typing && !(veh && me.seat === 0) && !(L.bar >= 0) && !dancing && !me.safe && !me.down && !app.revHeld;
+  const fireOk = me && !me.dead && !app.menuOpen && !app.typing && !(veh && me.seat === 0) && !(L.bar >= 0) && !dancing && !me.down && !app.revHeld;
   app.fireL = !!(fireOk && input.mouse.L);
   app.fireR = !!(fireOk && input.mouse.R);
   setListener(L.x, L.y);
@@ -1275,7 +1303,7 @@ function gameFrame(dt, now) {
       app.music.setIntensity(0);
     } else if (rid >= 0 && view.rs[rid]) {
       const o = view.rs[rid].owner;
-      const style = typeof o === 'number' ? ['bruxaria', 'melody', 'f150'][o] : 'volt';
+      const style = typeof o === 'number' ? ['bruxaria', 'melody', 'f150'][o] || 'melody' : 'volt';
       const key = style + rid;
       if (key !== app.trackKey) { app.trackKey = key; app.music.setTrack(style, ((world.seed ^ (rid * 2654435761)) >>> 0) + (typeof o === 'string' ? 77 : 0)); }
     }
@@ -1494,7 +1522,7 @@ function buildView() {
     vehicles = [...g.vehicles.values()].map((v) => ({ id: v.id, type: v.type, x: v.x, y: v.y, hp: v.hp, maxHp: v.maxHp, charge: v.charge, dir: v.dir, flying: v.flying, flash: v.flash > 0, charging: v.charging, team: G.gangIdx(v.team), seats: v.seats, civ: v.civ ? 1 : 0 }));
     pickups = [...g.pickups.values()]; projectiles = g.projectiles;
     civs = [...g.civs.values()].map((c) => ({ id: c.id, x: c.x, y: c.y, seed: c.seed, flee: c.flee > 0, flash: c.flash > 0, moving: c.moving, dance: c.danceT > 0, aim: c.aim, hpPct: Math.round(100 * c.hp / c.maxHp) }));
-    rs = g.rs; raids = g.raids.filter((r) => !r.kind).map((r) => ({ ...r, g: G.gangIdx(r.gang) })); dayT = g.dayT;
+    rs = g.rs; raids = g.raids.filter((r) => !r.kind || (r.kind === 'p' && r.gang)).map((r) => ({ ...r, g: G.gangIdx(r.gang) })); dayT = g.dayT;
     broken = new Set([...g.brk.entries()].filter(([, s]) => s.deadT > 0).map(([k]) => k));
     waypointsSrc = [...g.players.values()].map((p) => ({ name: p.name, color: p.color, wp: p.wp, g: G.gangIdx(p.gang), me: p.id === 'host' }));
     pcars = [...g.pcars.values()].map((c) => ({ x: c.x, y: c.y, dir: c.dir, state: c.state === 'in' ? 0 : c.state === 'drop' ? 1 : c.cruise ? 3 : 2 }));

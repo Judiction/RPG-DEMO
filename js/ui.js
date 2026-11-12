@@ -7,8 +7,9 @@ import {
   TILE, randomLook, MAP_TYPES, MAP_TYPE_IDS, MAP_SIZES, VEHICLES, VEHICLE_IDS, BATTERY_PRICE, TURRETS, TURRET_IDS,
   TURRET_MAX_MK, turretMult, turretUpgradePrice, COMPOUND_UPS, COMPOUND_UP_IDS, PVP_WIN_SHARE, FOLLOWER_MAX,
   DRINKS, STIMS, ITEMS, BELT_SIZE, WANTED, BAD_BATCH, BOCA, WITHDRAW, DOWN,
-  GRENADES, GRENADE_IDS, GREN_MAX, SQUADS, EXTRA_SOLDIERS, TURRET_REPAIR_K,
+  GRENADES, GRENADE_IDS, GREN_MAX, SQUADS, EXTRA_SOLDIERS, TURRET_REPAIR_K, EMPTY, EMPTY_SHARES,
 } from './data.js';
+import { emptyDistricts } from './game.js';
 import { T, generateWorld, mapImageData } from './world.js';
 import { charSprite, armSprite, playerSpec, mk, turretHead, vehicleSprite } from './sprites.js';
 import { getVolume } from './audio.js';
@@ -203,7 +204,7 @@ export function createUI(root, cb) {
   });
 
   // ---------------------------------------------------------------- new game setup + map preview
-  const ng = { mode: 'pve', kingTime: 10, type: 'coastal', size: 'M', seed: randomSeed(), gangIdx: Math.max(0, GANG_COLORS.indexOf(prefs.gangColor)), slot: 0, world: null, genT: null };
+  const ng = { mode: 'pve', empty: 0, kingTime: 10, type: 'coastal', size: 'M', seed: randomSeed(), gangIdx: Math.max(0, GANG_COLORS.indexOf(prefs.gangColor)), slot: 0, world: null, genT: null };
   function openNewGame() {
     const slots = U.slots || [];
     let free = slots.findIndex((s) => !s);
@@ -216,6 +217,8 @@ export function createUI(root, cb) {
             <div class="seg" id="ng-mode"><button data-v="pve">PVE · CAMPAIGN</button><button data-v="pvp">PVP · GANG WAR</button><button data-v="king">REI DA BOCA</button></div></div>
           <div class="ng-desc" id="ng-mode-desc"></div>
           <div class="ng-row" id="ng-king-row"><span class="ng-label">HOLD TIME</span><div class="seg" id="ng-king">${KING_TIMES.map((m) => `<button data-v="${m}">${m} MIN</button>`).join('')}</div></div>
+          <div class="ng-row"><span class="ng-label">EMPTY DISTRICTS</span><div class="seg" id="ng-empty">${EMPTY_SHARES.map((v) => `<button data-v="${v}">${Math.round(v * 100)}%</button>`).join('')}</div></div>
+          <div class="ng-desc" id="ng-empty-desc"></div>
           <div class="ng-row"><span class="ng-label">MAP</span><div class="seg wrap" id="ng-type">${MAP_TYPE_IDS.map((t) => `<button data-v="${t}">${MAP_TYPES[t].name.toUpperCase()}</button>`).join('')}</div></div>
           <div class="ng-desc" id="ng-type-desc"></div>
           <div class="ng-row"><span class="ng-label">SIZE</span><div class="seg" id="ng-size">${Object.keys(MAP_SIZES).map((s) => `<button data-v="${s}">${MAP_SIZES[s].name.toUpperCase()}</button>`).join('')}</div></div>
@@ -232,7 +235,10 @@ export function createUI(root, cb) {
   }
   function refreshNG(regen) {
     const set = (id, v) => $('#' + id).querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === String(v)));
-    set('ng-mode', ng.mode); set('ng-type', ng.type); set('ng-size', ng.size); set('ng-slot', ng.slot); set('ng-king', ng.kingTime);
+    set('ng-mode', ng.mode); set('ng-type', ng.type); set('ng-size', ng.size); set('ng-slot', ng.slot); set('ng-king', ng.kingTime); set('ng-empty', ng.empty);
+    $('#ng-empty-desc').textContent = ng.empty > 0
+      ? `${Math.round(ng.empty * 100)}% of the districts start abandoned (grey): nobody holds them. Anyone — players or the factions — can walk in and take the core, but the police come to clear it right after.`
+      : 'Every district starts held by a faction.';
     $('#ng-king-row').style.display = ng.mode === 'king' ? '' : 'none';
     $('#ng-mode-desc').textContent = ng.mode === 'king'
       ? `King of the hill: every gang starts at the edge of the city. Conquer your way to the BOCA KING in the middle and hold it for ${ng.kingTime} minutes in total (the timer pauses while someone else has it). The NPC factions can win too!`
@@ -258,11 +264,12 @@ export function createUI(root, cb) {
     const c = $('#ng-map');
     if (!c || !ng.world) return;
     const w = ng.world;
-    drawWorldMap(c, w, (R) => (R.base ? (ng.mode === 'pve' ? GANG_COLORS[ng.gangIdx] : '#ffffff') : R.king ? '#ffd23f' : FACTIONS[R.faction].color), { bases: true, mode: ng.mode === 'king' ? 'pvp' : ng.mode, gangColor: GANG_COLORS[ng.gangIdx] });
+    const empt = new Set(emptyDistricts(w, ng.empty));
+    drawWorldMap(c, w, (R) => (R.base ? (ng.mode === 'pve' ? GANG_COLORS[ng.gangIdx] : '#ffffff') : R.king ? '#ffd23f' : empt.has(R.id) ? '#6a6a72' : FACTIONS[R.faction].color), { bases: true, mode: ng.mode === 'king' ? 'pvp' : ng.mode, gangColor: GANG_COLORS[ng.gangIdx] });
     const n = w.regions.length;
     const bi = {};
     for (const R of w.regions) bi[R.biome] = (bi[R.biome] || 0) + 1;
-    $('#ng-info').innerHTML = `${n} districts · ${w.W}×${w.H} tiles · ${Object.entries(bi).filter(([k]) => k !== 'base').map(([k, v]) => `${v} ${BIOME_LABEL[k].toLowerCase()}`).join(', ')}${ng.mode !== 'pve' ? ` · ${w.bases.length} gang bases (white)` : ''}${ng.mode === 'king' ? ' · BOCA KING (gold)' : ''}`;
+    $('#ng-info').innerHTML = `${n} districts · ${w.W}×${w.H} tiles · ${Object.entries(bi).filter(([k]) => k !== 'base').map(([k, v]) => `${v} ${BIOME_LABEL[k].toLowerCase()}`).join(', ')}${ng.mode !== 'pve' ? ` · ${w.bases.length} gang bases (white)` : ''}${ng.mode === 'king' ? ' · BOCA KING (gold)' : ''}${empt.size ? ` · ${empt.size} empty (grey)` : ''}`;
   }
   $('#modal').addEventListener('click', (e) => {
     if (U.open !== 'newgame') return;
@@ -271,6 +278,7 @@ export function createUI(root, cb) {
       const seg = b.parentElement.id, v = b.dataset.v;
       if (seg === 'ng-mode') { ng.mode = v; refreshNG(true); }
       if (seg === 'ng-king') { ng.kingTime = Number(v); refreshNG(false); }
+      if (seg === 'ng-empty') { ng.empty = Number(v); refreshNG(false); }
       if (seg === 'ng-type') { ng.type = v; refreshNG(true); }
       if (seg === 'ng-size') { ng.size = v; refreshNG(true); }
       if (seg === 'ng-slot') { ng.slot = Number(v); refreshNG(false); }
@@ -281,7 +289,7 @@ export function createUI(root, cb) {
     if (e.target.id === 'ng-start') {
       if (!ng.world) return;
       readName();
-      cb.onHost({ mode: ng.mode, kingTime: ng.kingTime, type: ng.type, size: ng.size, seed: ng.seed, gangIdx: ng.gangIdx, gangName: prefs.gangName || GANG_DEFAULT_NAMES[ng.gangIdx], slot: ng.slot, world: ng.world });
+      cb.onHost({ mode: ng.mode, empty: ng.empty, kingTime: ng.kingTime, type: ng.type, size: ng.size, seed: ng.seed, gangIdx: ng.gangIdx, gangName: prefs.gangName || GANG_DEFAULT_NAMES[ng.gangIdx], slot: ng.slot, world: ng.world });
     }
   });
   $('#modal').addEventListener('change', (e) => {
@@ -491,7 +499,9 @@ export function createUI(root, cb) {
       for (const slot of ['L', 'R']) {
         const id = eq[slot];
         const lvl = prof.armory[id] || 1;
-        html += `<div class="slot weapon ${s.vehicle && s.vehicle.seat === 0 ? 'locked' : ''}"><img src="${weaponIcon(id)}"><span class="key">${slot === 'L' ? 'LMB' : 'RMB'}</span><span class="wname">${esc(WEAPONS[id].name)} <i>Mk${lvl}</i></span></div>`;
+        const wb = s.me && s.me.wb && s.me.wb[slot];
+        const pips = wb ? `<span class="wburst">${wb[2] > 0 ? `<b class="rech">RECHARGE ${wb[2].toFixed(1)}s</b>` : '●'.repeat(wb[0]) + '<i>' + '●'.repeat(wb[1] - wb[0]) + '</i>'}</span>` : '';
+        html += `<div class="slot weapon ${s.vehicle && s.vehicle.seat === 0 ? 'locked' : ''}"><img src="${weaponIcon(id)}"><span class="key">${slot === 'L' ? 'LMB' : 'RMB'}</span><span class="wname">${esc(WEAPONS[id].name)} <i>Mk${lvl}</i></span>${pips}</div>`;
       }
       html += '<div class="slot-gap"></div>';
       for (const k of ['Q', 'E', 'R', 'F']) {
@@ -605,6 +615,7 @@ export function createUI(root, cb) {
   const ownerColor = (o) => (isGang(o) ? GANG_COLORS[gIdx(o)] : FACTIONS[o] ? FACTIONS[o].color : '#888');
   function ownerName(s, o) {
     if (isGang(o)) { const g = s.gangs.find((x) => x.idx === gIdx(o)); return g ? g.name : 'Gang'; }
+    if (o === EMPTY) return 'Empty';
     return FACTIONS[o] ? FACTIONS[o].short : '?';
   }
 
@@ -617,6 +628,7 @@ export function createUI(root, cb) {
     const mine = rs.owner === 'g' + s.myGang;
     if (R.base && mine) sub = 'Your gang\'s headquarters. Shops, garage, storage, safety.';
     else if (isGang(rs.owner)) sub = `Controlled by ${esc(ownerName(s, rs.owner))} · ${rs.guards} guards${mine ? '' : ' · <b class="bad">RIVAL TURF</b>'}`;
+    else if (rs.owner === EMPTY) sub = '<b>EMPTY</b> — nobody holds it. Stand on the core to take it (the police will come)';
     else sub = `${FACTIONS[rs.owner].name} · threat ${'▮'.repeat(Math.min(6, R.tier))} · garrison ${rs.garrison}`;
     b.innerHTML = `<div class="b-name" style="color:${col}">${esc(R.name.toUpperCase())}</div><div class="b-sub">${BIOME_LABEL[R.biome]}${R.hq ? ' · <b>FACTION HQ</b>' : ''} — ${sub}</div>${s.musicName ? `<div class="b-music">♪ ${esc(s.musicName)}</div>` : ''}`;
     b.classList.remove('show'); void b.offsetWidth; b.classList.add('show');
@@ -630,7 +642,7 @@ export function createUI(root, cb) {
       // Rei da Boca: who holds the BOCA KING, and everyone's time
       const K = s.king, kr = s.rs[K.r];
       const holder = kr ? kr.owner : null;
-      const nameOf = (o) => (isGang(o) ? (s.gangs.find((g) => g.idx === gIdx(o)) || {}).name || 'Gang' : FACTIONS[o] ? FACTIONS[o].short : '?');
+      const nameOf = (o) => (isGang(o) ? (s.gangs.find((g) => g.idx === gIdx(o)) || {}).name || 'Gang' : o === EMPTY ? 'Empty' : FACTIONS[o] ? FACTIONS[o].short : '?');
       const colOf = (o) => ownerColor(o);
       const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
       html += `<div class="king-box"><div class="king-title">👑 BOCA KING · ${fmt(K.goal)}</div><div class="turf-row"><small>Held by</small> <b style="color:${colOf(holder)}">${esc(nameOf(holder))}</b></div>`;
@@ -660,7 +672,8 @@ export function createUI(root, cb) {
       if (rs.owner !== my) {
         const adj = R.neighbors.some((n) => s.rs[n].owner === my);
         let st;
-        if (!adj) st = '<span class="bad">Too far from our turf</span>';
+        if (rs.owner === EMPTY) st = '<span class="good">Empty! Stand on the core to take it</span>';
+        else if (!adj) st = '<span class="bad">Too far from our turf</span>';
         else if (isGang(rs.owner)) st = R.base ? '<span class="warn">Rival base! Clear defenders, hold the core</span>' : '<span class="warn">Rival turf: clear defenders, hold the core</span>';
         else if (R.hq && !rs.hqUnlocked) st = '<span class="bad">HQ locked</span>';
         else if (R.hq && !rs.bossDefeated) st = '<span class="warn">Defeat the boss</span>';
@@ -916,7 +929,7 @@ export function createUI(root, cb) {
     const mine = rs.owner === 'g' + s.myGang;
     el.innerHTML = `<div class="sel-box" style="border-color:${ownerColor(rs.owner)}"><b style="color:${ownerColor(rs.owner)}">${esc(R.name)}</b><br>
       ${BIOME_LABEL[R.biome]} · threat T${R.tier}${R.hq ? ' · <span class="warn">FACTION HQ</span>' : ''}<br>
-      ${isGang(rs.owner) ? `${esc(ownerName(s, rs.owner))} · ${rs.guards} guards${rs.up ? ` · ${(rs.slots || []).filter(Boolean).length} turrets` : ''}` : `${FACTIONS[rs.owner].short} · garrison ${rs.garrison}/${rs.garrisonMax}`}
+      ${isGang(rs.owner) ? `${esc(ownerName(s, rs.owner))} · ${rs.guards} guards${rs.up ? ` · ${(rs.slots || []).filter(Boolean).length} turrets` : ''}` : rs.owner === EMPTY ? 'Empty — nobody holds it' : `${FACTIONS[rs.owner].short} · garrison ${rs.garrison}/${rs.garrisonMax}`}
       ${mine ? `<br><button class="btn small" data-upgrades="${U.mapSel}">UPGRADE COMPOUND</button>` : squadBox(s, U.mapSel)}</div>`;
   }
   $('#modal').addEventListener('mousedown', (e) => {
@@ -1169,7 +1182,7 @@ export function createUI(root, cb) {
           <p><b>V</b> get in / out of a flying vehicle · <b>G</b> recruit a local (or pet a cat / dog) · <b>B</b> base or compound menu (stand at a QG building to open its shop)</p>
           <p>At 0 HP you go <b>down</b>: crawl and wait for a gang-mate to hold <b>E</b> next to you (1:30 before you die, <b>X</b> to give up). Dying costs 25% of your cash and part of your XP.</p>
           <p><b>E</b> at a bar door to go in · <b>B</b> at the counter or the dealer · <b>1 2 3</b> use belt items · <b>T</b> dance (next to locals: <b>6 7!</b> wins back respect · next to a church padre: <b>pray</b>)</p>
-          <p>Crimes that people see raise your <b>wanted stars</b>. Killing cops never clears them: lose the cops (stars fade slowly) or pay them off at the QG (B). If the cops put you down, you go to <b>prison</b>. Inside your QG walls you can't get hurt while it's calm.</p>
+          <p>Crimes that people see raise your <b>wanted stars</b>. Killing cops never clears them (and gives no XP): lose the cops (stars fade slowly), lay low inside your QG walls (fast), or pay them off at the QG (B). If the cops put you down, you go to <b>prison</b>. Inside your QG walls you can't get hurt while it's calm.</p>
           <p><b>TAB</b> map + waypoints · <b>Enter</b> chat · <b>M</b> mute music</p>
         </div>
         <button class="btn" data-set="stats">GAME STATS</button>
